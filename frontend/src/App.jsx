@@ -24,6 +24,8 @@ function App() {
   const [agents, setAgents] = useState([])
   const [templates, setTemplates] = useState([])
   const [error, setError] = useState('')
+  const [llm, setLlm] = useState({ provider: 'openai', api_key: '', model: '', base_url: '' })
+  const [llmCurrent, setLlmCurrent] = useState(null)
 
   function loadProjects() {
     api('/projects', token).then((d) => setProjects(d.projects || [])).catch((e) => setError(String(e)))
@@ -50,6 +52,18 @@ function App() {
       .catch((e) => setError(String(e)))
   }
 
+  useEffect(() => { api('/agents/llm-config', token).then(setLlmCurrent).catch(() => {}) }, [token])
+
+  function saveLlm() {
+    fetch('/api/agents/llm-config', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(llm),
+    }).then((r) => r.json())
+      .then(() => { setLlmCurrent({ provider: llm.provider, model: llm.model, api_key_set: !!llm.api_key }); setLlm({ ...llm, api_key: '' }) })
+      .catch((e) => setError(String(e)))
+  }
+
   const tasksByStatus = (detail || {}).tasks || []
   const approvals = (detail?.audit || []).filter((e) => ['approval.requested', 'approval.decided'].includes(e.event_type))
   const audit = (detail?.audit || []).slice(-30).reverse()
@@ -72,6 +86,28 @@ function App() {
 
       <div className="layout">
         <aside className="sidebar">
+          <h3>算力配置</h3>
+          <div className="llm">
+            <select value={llm.provider} onChange={(e) => setLlm({ ...llm, provider: e.target.value })}>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="openai_compatible">其他 OpenAI 兼容</option>
+            </select>
+            {llm.provider === 'openai_compatible' && (
+              <input placeholder="base_url（如 https://api.xxx.com/v1）" value={llm.base_url}
+                     onChange={(e) => setLlm({ ...llm, base_url: e.target.value })} />
+            )}
+            <input type="password" placeholder="API key" value={llm.api_key}
+                   onChange={(e) => setLlm({ ...llm, api_key: e.target.value })} />
+            <input placeholder="模型（可选）" value={llm.model}
+                   onChange={(e) => setLlm({ ...llm, model: e.target.value })} />
+            <button onClick={saveLlm}>保存算力配置</button>
+            {llmCurrent && (
+              <div className="p-sub">当前: {llmCurrent.provider} · {llmCurrent.model || '-'} · key {llmCurrent.api_key_set ? '✓' : '✗'}</div>
+            )}
+          </div>
+
           <h3>项目（{projects.length}）</h3>
           <ul>
             {projects.map((p) => (

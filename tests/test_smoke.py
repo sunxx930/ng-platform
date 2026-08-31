@@ -587,6 +587,40 @@ def test_instantiate_template(client):
     assert excel["executor"] == "builtin"
 
 
+def test_llm_config_save_openai(client, monkeypatch):
+    """算力配置：选 openai + 输 key → 正确映射写 .env（monkeypatch 不污染真 .env）。"""
+    captured = {}
+    monkeypatch.setattr("app.main._write_env_updates", lambda u: captured.update(u))
+    r = client.post("/agents/llm-config", headers=H1,
+                    json={"provider": "openai", "api_key": "sk-test", "model": "gpt-4o"})
+    assert r.status_code == 200
+    assert captured.get("LLM_PROVIDER") == "openai"
+    assert captured.get("OPENAI_API_KEY") == "sk-test"
+    assert captured.get("LLM_MODEL") == "gpt-4o"
+
+
+def test_llm_config_deepseek_mapping(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr("app.main._write_env_updates", lambda u: captured.update(u))
+    r = client.post("/agents/llm-config", headers=H1,
+                    json={"provider": "deepseek", "api_key": "sk-ds"})
+    assert r.status_code == 200
+    assert captured.get("LLM_PROVIDER") == "openai_compatible"
+    assert captured.get("LLM_BASE_URL") == "https://api.deepseek.com/v1"
+    assert captured.get("LLM_MODEL") == "deepseek-chat"
+
+
+def test_llm_config_invalid_provider(client):
+    r = client.post("/agents/llm-config", headers=H1, json={"provider": "wat"})
+    assert r.status_code == 400
+
+
+def test_llm_config_get(client):
+    r = client.get("/agents/llm-config", headers=H1)
+    assert r.status_code == 200
+    assert "api_key_set" in r.json()
+
+
 def test_auto_agent_is_builtin_latest_wins(client, tmp_path, monkeypatch):
     """P0：_is_builtin 取最新注册（先 builtin 后 openclaw → 判 openclaw，不误执行）。"""
     from app.storage.event_log import EventLog

@@ -241,6 +241,67 @@ def list_agents(auth: dict = Depends(require_auth)):
     return {"agents": _agents_registry()}
 
 
+# ---------- LLM 算力配置（前端下拉选 provider + 输 API key） ----------
+class LLMConfigIn(BaseModel):
+    provider: str              # openai | anthropic | deepseek | openai_compatible
+    api_key: str = ""
+    model: str = ""
+    base_url: str = ""         # openai_compatible 用
+
+
+def _write_env_updates(updates: dict[str, str]):
+    """更新项目根 .env（gitignore），保留其它行。仅 key 级覆盖，不碰 secrets 文件。"""
+    from pathlib import Path
+    path = Path(__file__).resolve().parent.parent / ".env"
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    keys = set(updates)
+    kept = [ln for ln in lines if ln.split("=", 1)[0].strip() not in keys]
+    kept.append("")  # 分隔
+    for k, v in updates.items():
+        kept.append(f"{k}={v}")
+    path.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
+
+
+@app.get("/agents/llm-config")
+def get_llm_config(auth: dict = Depends(require_auth)):
+    """当前算力配置（key 只报有无，不回显）。"""
+    require_level("read_project", auth["level"])
+    c = LLMClient()
+    return {"provider": c.cfg.provider, "model": c.cfg.model,
+            "api_key_set": bool(c.cfg.api_key)}
+
+
+@app.post("/agents/llm-config")
+def set_llm_config(body: LLMConfigIn, auth: dict = Depends(require_auth)):
+    """选择算力提供商 + 输入 API key → 写 gitignore 的 .env（下次 LLM 调用生效）。"""
+    require_level("write_message", auth["level"])
+    p = body.provider.strip().lower()
+    if p not in ("openai", "anthropic", "deepseek", "openai_compatible"):
+        raise HTTPException(400, f"未知 provider: {p}")
+    updates = {}
+    if p == "openai":
+        updates = {"LLM_PROVIDER": "openai", "OPENAI_API_KEY": body.api_key.strip(),
+                   "LLM_MODEL": body.model.strip() or "gpt-4o-mini"}
+    elif p == "anthropic":
+        updates = {"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": body.api_key.strip(),
+                   "LLM_MODEL": body.model.strip() or "claude-opus-4-8"}
+    elif p == "deepseek":
+        updates = {"LLM_PROVIDER": "openai_compatible",
+                   "LLM_BASE_URL": "https://api.deepseek.com/v1",
+                   "LLM_API_KEY": body.api_key.strip(),
+                   "LLM_MODEL": body.model.strip() or "deepseek-chat"}
+    else:  # openai_compatible
+        if not body.base_url:
+            raise HTTPException(400, "openai_compatible 需 base_url")
+        updates = {"LLM_PROVIDER": "openai_compatible",
+                   "LLM_BASE_URL": body.base_url.strip(),
+                   "LLM_API_KEY": body.api_key.strip(),
+                   "LLM_MODEL": body.model.strip()}
+    _write_env_updates(updates)
+    return {"provider": p, "status": "saved",
+            "note": "下次 LLM 调用生效（docker 模式需重建容器加载 secrets）"}
+
+
 # ---------- preagent 模板库 ----------
 def _load_templates() -> list[dict]:
     import json as _json
