@@ -9,7 +9,7 @@ from pathlib import Path
 
 from app.services.llm import LLMClient
 
-AGENT_NAME = "ng-assistant"
+AGENT_NAME = "NG助理"
 
 
 @dataclass

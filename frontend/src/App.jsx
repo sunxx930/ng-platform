@@ -76,7 +76,7 @@ function App() {
       .catch((e) => setError(String(e)))
   }
 
-  const ngAgents = agents.filter((a) => (a.executor || 'builtin') === 'builtin')
+  const ngAgents = agents.filter((a) => (a.executor || 'builtin') === 'builtin' && a.name !== 'ng-assistant')
 
   function capName(n) {
     return String(n || '').split(/[-_\s]+/).filter(Boolean)
@@ -84,13 +84,21 @@ function App() {
       .join(' ')
   }
 
-  // 合并注册 agent + 模板为一个 Agent 列表；英文名首字母大写 + 介绍下一行；已注册的模板不重复给＋
+  // 合并注册 agent + 模板为一个 Agent 列表；全部给＋（模板 instantiate，已注册 re-register 幂等）
   const regNames = new Set(ngAgents.map((a) => a.name))
   const combined = [
-    ...ngAgents.map((a) => ({ key: 'r-' + a.name, name: capName(a.name), desc: a.capability || a.role || '', canAdd: false })),
+    ...ngAgents.map((a) => ({ key: 'r-' + a.name, name: capName(a.name), desc: a.capability || a.role || '', reg: a })),
     ...templates.filter((t) => !regNames.has(t.name) && !regNames.has(t.name_cn))
-      .map((t) => ({ key: 't-' + t.id, id: t.id, name: t.name, desc: t.desc, canAdd: true })),
+      .map((t) => ({ key: 't-' + t.id, id: t.id, name: t.name, desc: t.desc })),
   ]
+
+  function addAgent(item) {
+    if (item.id) return addTemplate(item.id)          // 模板 → instantiate
+    const q = new URLSearchParams({ name: item.reg.name, capability: item.reg.capability || '', role: item.reg.role || '', executor: 'builtin' })
+    return fetch(`/api/agents/register?${q}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+      .then(() => api('/agents', token).then((d) => setAgents(d.agents || [])))
+      .catch((e) => setError(String(e)))
+  }
 
   function saveLlm() {
     fetch('/api/agents/llm-config', {
@@ -174,7 +182,7 @@ function App() {
               <li key={a.key}>
                 <div className="a-name">{a.name}</div>
                 <div className="a-desc">{a.desc}</div>
-                {a.canAdd && <button className="mini" onClick={() => addTemplate(a.id)}>＋</button>}
+                <button className="mini" onClick={() => addAgent(a)}>＋</button>
               </li>
             ))}
           </ul>

@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 
-from app.agents.builtin import BuiltinAgent, TaskContext
+from app.agents.builtin import AGENT_NAME, BuiltinAgent, TaskContext
 from app.domain import events
 from app.domain.task import TaskStatus
 from app.workers.base import Worker
@@ -73,12 +73,12 @@ class AutoAgentWorker(Worker):
         idem = f"deliverable:{tid}:{result['file_ref']}:" + hashlib.sha256(
             f"done|{result['summary']}".encode()).hexdigest()[:10]
         self._log.append(events.new_event(
-            events.EventType.DELIVERABLE_SUBMITTED, "agent:ng-assistant",
+            events.EventType.DELIVERABLE_SUBMITTED, f"agent:{AGENT_NAME}",
             {"file_ref": result["file_ref"], "version": 1, "verdict": "done",
              "summary": result["summary"]},
             project_id=ctx["project_id"], task_id=tid, idempotency_key=idem))
         self._log.append(events.new_event(
-            events.EventType.TASK_STATE_CHANGED, "agent:ng-assistant",
+            events.EventType.TASK_STATE_CHANGED, f"agent:{AGENT_NAME}",
             {"from": TaskStatus.IN_PROGRESS.value, "to": TaskStatus.IN_REVIEW.value,
              "trigger": "deliverable.submitted"},
             project_id=ctx["project_id"], task_id=tid,
@@ -100,7 +100,7 @@ class AutoAgentWorker(Worker):
                     and e["payload"].get("role", "owner") == "reviewer":
                 reviewer = e["payload"].get("agent")
         self._log.append(events.new_event(
-            events.EventType.REVIEW_REQUESTED, "agent:ng-assistant",
+            events.EventType.REVIEW_REQUESTED, f"agent:{AGENT_NAME}",
             {"review_id": str(uuid.uuid4()), "trigger": "deliverable.submitted",
              "reviewer": reviewer},
             project_id=project_id, task_id=tid,
