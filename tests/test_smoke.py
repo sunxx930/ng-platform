@@ -621,6 +621,19 @@ def test_llm_config_get(client):
     assert "api_key_set" in r.json()
 
 
+def test_feedback_submit_and_list(client):
+    """反馈入口：提交 → feedback.submitted 事件 → owner 可查。"""
+    r = client.post("/feedback", headers=H1, json={"content": "界面很漂亮", "contact": "wx"})
+    assert r.status_code == 200
+    items = client.get("/feedback", headers=H1).json()["feedback"]
+    assert any(i["content"] == "界面很漂亮" and i["contact"] == "wx" for i in items)
+
+
+def test_feedback_empty_rejected(client):
+    r = client.post("/feedback", headers=H1, json={"content": "   "})
+    assert r.status_code == 400
+
+
 def test_auto_agent_is_builtin_latest_wins(client, tmp_path, monkeypatch):
     """P0：_is_builtin 取最新注册（先 builtin 后 openclaw → 判 openclaw，不误执行）。"""
     from app.storage.event_log import EventLog

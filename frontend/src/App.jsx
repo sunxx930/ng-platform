@@ -29,6 +29,8 @@ function App() {
   const [providers, setProviders] = useState([])
   const [goal, setGoal] = useState('')
   const [goalTitle, setGoalTitle] = useState('')
+  const [showFb, setShowFb] = useState(false)
+  const [fb, setFb] = useState({ content: '', contact: '', rating: null })
 
   function loadProjects() {
     api('/projects', token).then((d) => setProjects(d.projects || [])).catch((e) => setError(String(e)))
@@ -127,8 +129,36 @@ function App() {
             onChange={(e) => setToken(e.target.value)}
           />
           <button onClick={loadProjects}>刷新</button>
+          <button onClick={() => setShowFb(true)}>反馈</button>
         </div>
       </header>
+
+      {showFb && (
+        <div className="modal">
+          <div className="modal-box">
+            <h3>提意见 / 反馈</h3>
+            <textarea placeholder="告诉我们哪里好用、哪里不好用，或你的建议……" rows={4}
+                      value={fb.content} onChange={(e) => setFb({ ...fb, content: e.target.value })} />
+            <input placeholder="联系方式（可选，方便回访）" value={fb.contact}
+                   onChange={(e) => setFb({ ...fb, contact: e.target.value })} />
+            <div className="stars">
+              {[1, 2, 3, 4, 5].map((s) => (
+                <span key={s} className={fb.rating === s ? 'on' : ''} onClick={() => setFb({ ...fb, rating: s })}>★</span>
+              ))}
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setShowFb(false)}>取消</button>
+              <button disabled={!fb.content.trim()} onClick={() => {
+                fetch('/api/feedback', {
+                  method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify(fb),
+                }).then(() => { setShowFb(false); setFb({ content: '', contact: '', rating: null }) })
+                  .catch((e) => setError(String(e)))
+              }}>提交</button>
+            </div>
+          </div>
+        </div>
+      )}
       {error && <div className="error">{error}</div>}
 
       <div className="layout">

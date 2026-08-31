@@ -32,6 +32,15 @@ button.mini:hover { color: #ff8a8a; border-color: #6b2f36; }
 .goal-box h2 { margin: 0 0 10px; font-size: 16px; }
 .goal-box input, .goal-box textarea { background: var(--bg); border: 1px solid var(--line); color: var(--text); padding: 8px 10px; border-radius: 6px; width: 100%; margin-bottom: 8px; font: inherit; }
 .goal-box textarea { resize: vertical; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 10; }
+.modal-box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; width: 420px; max-width: 92vw; }
+.modal-box h3 { margin: 0 0 12px; }
+.modal-box textarea, .modal-box input { background: var(--bg); border: 1px solid var(--line); color: var(--text); padding: 8px 10px; border-radius: 6px; width: 100%; margin-bottom: 10px; font: inherit; }
+.modal-box textarea { resize: vertical; }
+.stars { margin-bottom: 12px; font-size: 22px; letter-spacing: 4px; }
+.stars span { cursor: pointer; color: var(--muted); }
+.stars span.on { color: #f5b942; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .agents li { position: relative; cursor: default; padding: 6px 8px; }
 .agents li:hover { background: #1f2430; }
 .a-name { font-weight: 600; font-size: 13px; }

@@ -51,7 +51,7 @@ services:
     volumes:
       - ~/.openclaw/shared/messages:/shared/messages:rw
     ports:
-      - "127.0.0.1:8000:8000"   # 端口收敛：仅绑定本机回环，不暴露到局域网
+      - "8000:8000"   # 远程访问：绑定所有接口（试用者可从局域网/公网访问）
     depends_on:
       db:
         condition: service_healthy

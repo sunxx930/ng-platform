@@ -18,6 +18,7 @@ openclaw 接口（新增）：
 
 import hashlib
 import uuid
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, Depends
@@ -360,6 +361,41 @@ def set_llm_config(body: LLMConfigIn, auth: dict = Depends(require_auth)):
     _write_env_updates(updates)
     return {"provider": p, "status": "saved",
             "note": "下次 LLM 调用生效（docker 模式需重建容器加载 secrets）"}
+
+
+# ---------- 试用者反馈 ----------
+class FeedbackIn(BaseModel):
+    content: str
+    contact: str = ""       # 联系方式（可选）
+    rating: int | None = None  # 1-5（可选）
+
+
+@app.post("/feedback")
+def submit_feedback(body: FeedbackIn, auth: dict = Depends(require_auth)):
+    """试用者提意见：写 feedback.submitted 事件（审计），owner 可查。"""
+    if not body.content.strip():
+        raise HTTPException(400, "反馈内容不能为空")
+    log.append(events.new_event(
+        events.EventType.FEEDBACK_SUBMITTED, f"user:{auth['user']}",
+        {"content": body.content.strip(), "contact": body.contact.strip(),
+         "rating": body.rating},
+        idempotency_key=f"feedback:" + hashlib.sha256(
+            body.content.strip().encode()).hexdigest()[:12]))
+    return {"status": "submitted"}
+
+
+@app.get("/feedback")
+def list_feedback(auth: dict = Depends(require_auth)):
+    """反馈列表（owner 查看试用者意见）。"""
+    require_level("read_audit", auth["level"])
+    items = []
+    for e in log.replay():
+        if e["event_type"] == events.EventType.FEEDBACK_SUBMITTED.value:
+            p = e["payload"]
+            items.append({"actor": e.get("actor"), "content": p.get("content"),
+                          "contact": p.get("contact", ""), "rating": p.get("rating"),
+                          "ts": e.get("created_at_ts")})
+    return {"feedback": list(reversed(items))}
 
 
 # ---------- preagent 模板库 ----------
@@ -732,3 +768,27 @@ def agent_transfer(req: TransferIn, auth: dict = Depends(require_auth)):
         "agent": req.agent_id,
         "detail": result.error or "ok",
     }
+
+
+# ---------- 远程访问：/api 前缀剥离 + 前端静态托管（生产） ----------
+@app.middleware("http")
+async def strip_api_prefix(request: Request, call_next):
+    """前端用 /api/* 调后端；剥离前缀路由到真实端点（dev vite 代理同语义）。"""
+    p = request.scope["path"]
+    if p == "/api":
+        request.scope["path"] = "/"
+    elif p.startswith("/api/"):
+        request.scope["path"] = p[len("/api"):]
+    return await call_next(request)
+
+
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _DIST.exists() and (_DIST / "index.html").exists():
+    app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    async def spa():
+        return FileResponse(_DIST / "index.html")
