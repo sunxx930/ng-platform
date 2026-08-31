@@ -30,6 +30,7 @@
 body {
   margin: 0; background: var(--bg); color: var(--text); font: 14px/1.55 var(--font);
   -webkit-font-smoothing: antialiased;
+  min-width: 1080px;   /* S2 响应式兜底：桌面优先，窄屏横向滚动 */
   background-image:
     radial-gradient(ellipse 70% 40% at 50% -10%, rgba(109,124,255,.10), transparent),
     radial-gradient(ellipse 40% 30% at 90% 20%, rgba(79,172,254,.06), transparent);

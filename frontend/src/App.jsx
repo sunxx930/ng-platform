@@ -58,6 +58,7 @@ function errMsg(e) {
 
 function App() {
   const [token, setToken] = useState('l1-agent-token')
+  const [tokenDraft, setTokenDraft] = useState('l1-agent-token')
   const [projects, setProjects] = useState([])
   const [selected, setSelected] = useState(null)
   const [detail, setDetail] = useState(null)
@@ -74,6 +75,7 @@ function App() {
   const [showFb, setShowFb] = useState(false)
   const [fb, setFb] = useState({ content: '', contact: '', rating: null })
   const [toast, setToast] = useState('')
+  const [confirmDel, setConfirmDel] = useState(null)
   const [me, setMe] = useState(null)
   const canL3 = (me?.level || 0) >= 3
 
@@ -115,8 +117,7 @@ function App() {
   }
 
   function archiveProject(pid) {
-    if (!window.confirm('确定终止并删除这个项目？（审计事件保留，项目从看板移除）')) return
-    api(`/projects/${pid}/archive`, token, { method: 'POST' }).then(() => loadProjects()).catch((e) => setError(errMsg(e)))
+    api(`/projects/${pid}/archive`, token, { method: 'POST' }).then(() => { loadProjects(); setConfirmDel(null); showToast('项目已终止删除') }).catch((e) => setError(errMsg(e)))
   }
 
   const ngAgents = agents.filter((a) => (a.executor || 'builtin') === 'builtin' && a.status !== 'disabled' && a.name !== 'ng-assistant')
@@ -195,8 +196,10 @@ function App() {
           </div>
         </div>
         <div className="toolbar">
-          <input className="token" value={token} placeholder="Bearer token"
-                 onChange={(e) => setToken(e.target.value)} title="API 访问 token" />
+          <input className="token" value={tokenDraft} placeholder="Bearer token" title="API 访问 token"
+                 onChange={(e) => setTokenDraft(e.target.value)}
+                 onKeyDown={(e) => e.key === 'Enter' && setToken(tokenDraft)} />
+          <button onClick={() => setToken(tokenDraft)}>应用 token</button>
           <span className={`level-badge l${me?.level || '?'}`}>{me ? `L${me.level}` : '未认证'}</span>
           <button onClick={loadProjects}>刷新</button>
           <button className="primary" onClick={() => setShowFb(true)}>反馈</button>
@@ -268,7 +271,8 @@ function App() {
                     </div>
                     <div className="p-actions">
                       <span className={`pill ${p.status}`}>{p.status === 'active' ? '运行中' : p.status}</span>
-                      <button className="mini" title="终止/删除" onClick={(e) => { e.stopPropagation(); archiveProject(p.project_id) }}>×</button>
+                      <button className="mini" title="终止/删除" data-testid="archive-project"
+                              onClick={(e) => { e.stopPropagation(); setConfirmDel(p.project_id) }}>×</button>
                     </div>
                   </div>
                 </li>
@@ -310,7 +314,7 @@ function App() {
             ) : (
               <div className="proj-grid">
                 {projects.map((p) => (
-                  <div key={p.project_id} className="proj-card" onClick={() => loadDetail(p.project_id)}>
+                  <div key={p.project_id} className="proj-card" data-testid="project-card" onClick={() => loadDetail(p.project_id)}>
                     <div className="proj-head">
                       <div className="proj-title">{p.title}</div>
                       <span className={`pill ${p.status}`}>{p.status === 'active' ? '运行中' : p.status}</span>
@@ -345,7 +349,7 @@ function App() {
                           {LEGAL[t.status]?.length > 0 && (
                             <div className="t-actions">
                               {t.status === 'in_progress' && (
-                                <button className="mini" onClick={() => submitDeliverable(t.task_id)}>提交产出</button>
+                                <button className="mini" data-testid="submit-deliverable" onClick={() => submitDeliverable(t.task_id)}>提交产出</button>
                               )}
                               <select className="advance" value=""
                                       onChange={(e) => e.target.value && advanceState(t.task_id, e.target.value)}>
@@ -371,8 +375,8 @@ function App() {
                       <span className="ap-scope">{e.payload?.scope || '流程变更'}</span>
                       {canL3 ? (
                         <span className="ap-actions">
-                          <button className="mini ok" onClick={() => decideApproval(e.payload.approval_id, 'approve')}>✅ 批准</button>
-                          <button className="mini danger" onClick={() => decideApproval(e.payload.approval_id, 'reject')}>✕ 拒绝</button>
+                          <button className="mini ok" data-testid="approve-btn" onClick={() => decideApproval(e.payload.approval_id, 'approve')}>✅ 批准</button>
+                          <button className="mini danger" data-testid="reject-btn" onClick={() => decideApproval(e.payload.approval_id, 'reject')}>✕ 拒绝</button>
                         </span>
                       ) : <span className="ap-locked">🔒 需 L3 权限</span>}
                     </div>
@@ -396,6 +400,19 @@ function App() {
       </div>
 
       {toast && <div className="toast">{toast}</div>}
+
+      {confirmDel && (
+        <div className="modal" onClick={() => setConfirmDel(null)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3>🗑 终止并删除项目？</h3>
+            <p className="muted">项目会从看板移除；审计事件保留（append-only），不可恢复。</p>
+            <div className="modal-actions">
+              <button onClick={() => setConfirmDel(null)}>取消</button>
+              <button className="primary" data-testid="confirm-archive" onClick={() => archiveProject(confirmDel)}>确认删除</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showFb && (
         <div className="modal" onClick={() => setShowFb(false)}>
