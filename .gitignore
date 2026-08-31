@@ -13,6 +13,7 @@ __pycache__/
 
 # 密钥/本地配置
 .env
+.secrets/
 
 # macOS
 .DS_Store

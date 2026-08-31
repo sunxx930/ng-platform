@@ -34,22 +34,47 @@ DEFAULT_MODELS = {"anthropic": "claude-haiku-4-5-20251001",
                   "openai_compatible": ""}
 
 
+def _secret_file(name: str) -> str:
+    """Docker secrets 挂载路径（/run/secrets/<NAME>）——存在则读内容。
+
+    安全（2026-08-31）：LLM key 走 compose secrets 挂载为文件，不落 rendered config。
+    """
+    try:
+        p = Path(f"/run/secrets/{name}")
+        if p.exists():
+            return p.read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _key_from(env: dict, name: str) -> str:
+    """env 优先，缺则读 Docker secret 文件。"""
+    val = (env.get(name) or "").strip()
+    return val or _secret_file(name)
+
+
 def load_config_from_env(env: dict | None = None) -> LLMConfig:
-    """只要用户有 API 就接得进：Anthropic / OpenAI / 任意 OpenAI 兼容端点。"""
+    """只要用户有 API 就接得进：Anthropic / OpenAI / 任意 OpenAI 兼容端点。
+
+    key 来源优先级：环境变量 → Docker secret 文件（/run/secrets/<NAME>）→ .env。
+    """
     if env is None:
         from dotenv import load_dotenv
         load_dotenv()   # 读 gitignore 的 .env（不覆盖已存在的环境变量）
         env = dict(os.environ)
     provider = (env.get("LLM_PROVIDER") or "").strip().lower()
-    api_key = (env.get("ANTHROPIC_API_KEY") or env.get("OPENAI_API_KEY")
-               or env.get("LLM_API_KEY") or "").strip()
+    anthropic_key = _key_from(env, "ANTHROPIC_API_KEY")
+    openai_key = _key_from(env, "OPENAI_API_KEY")
+    generic_key = _key_from(env, "LLM_API_KEY")
+    api_key = anthropic_key or openai_key or generic_key
     base_url = (env.get("LLM_BASE_URL") or env.get("OPENAI_BASE_URL") or "").strip()
     if provider in ("", "auto"):
-        if env.get("ANTHROPIC_API_KEY"):
+        if anthropic_key:
             provider = "anthropic"
         elif base_url:
             provider = "openai_compatible"
-        elif env.get("OPENAI_API_KEY") or env.get("LLM_API_KEY"):
+        elif openai_key or generic_key:
             provider = "openai"
         else:
             provider = "anthropic"

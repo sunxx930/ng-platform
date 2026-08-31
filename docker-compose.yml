@@ -39,13 +39,15 @@ services:
       NG_LEVEL1_TOKEN: ${NG_LEVEL1_TOKEN:?必须注入强随机 token}
       OPENCLAW_BIN: openclaw
       OPENCLAW_SHARED_DIR: /shared/messages
-      # 底层算力接入：只要用户有 API 就接得进（可选，未设则算力功能不可用）
+      # 底层算力接入：provider 非密钥走 env；API key 走 compose secrets（挂载 /run/secrets/，
+      # 不落 rendered config——安全 2026-08-31）。LLMClient 会读 /run/secrets/<NAME>。
       LLM_PROVIDER: ${LLM_PROVIDER:-}
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    secrets:
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - LLM_API_KEY
     volumes:
       - ~/.openclaw/shared/messages:/shared/messages:rw
     ports:
@@ -69,13 +71,14 @@ services:
       DATABASE_URL: postgresql+psycopg://ng_app:${NG_APP_PASSWORD:?}@db:5432/ng_platform
       # TransferEscalationWorker 需要读共享转移消息
       OPENCLAW_SHARED_DIR: /shared/messages
-      # 底层算力接入：容器内 AutoAgentWorker 要跑真实 agent-run
+      # 底层算力接入：容器内 AutoAgentWorker 要跑真实 agent-run；API key 走 secrets
       LLM_PROVIDER: ${LLM_PROVIDER:-}
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    secrets:
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - LLM_API_KEY
     volumes:
       - ~/.openclaw/shared/messages:/shared/messages:rw
       - ./artifacts:/app/artifacts:rw   # P1：自研 agent 产出持久卷，容器销毁不丢
@@ -88,3 +91,13 @@ services:
 
 volumes:
   pgdata:
+
+# 安全（2026-08-31）：LLM API key 走 compose secrets（挂载为文件），
+# 避免 docker compose config/日志 渲染出明文 key。值来自 gitignore 的 .secrets/。
+secrets:
+  OPENAI_API_KEY:
+    file: ./.secrets/OPENAI_API_KEY
+  ANTHROPIC_API_KEY:
+    file: ./.secrets/ANTHROPIC_API_KEY
+  LLM_API_KEY:
+    file: ./.secrets/LLM_API_KEY

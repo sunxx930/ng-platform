@@ -19,6 +19,15 @@ export NG_LEVEL1_TOKEN="${NG_LEVEL1_TOKEN:-$(openssl rand -hex 24)}"
 export NG_LEVEL3_TOKEN="${NG_LEVEL3_TOKEN:-$(openssl rand -hex 24)}"
 echo "[e2e] NG_LEVEL1_TOKEN=${NG_LEVEL1_TOKEN:0:8}… NG_LEVEL3_TOKEN=${NG_LEVEL3_TOKEN:0:8}…（可外部传入固定值）"
 
+# 安全（2026-08-31）：LLM key 走 compose secrets（.secrets/，gitignore）。
+# CI/全新 checkout 无 .secrets/ → compose 会失败；E2E 不需要真实算力，生成占位即可。
+mkdir -p .secrets
+for s in OPENAI_API_KEY ANTHROPIC_API_KEY LLM_API_KEY; do
+  [ -f ".secrets/$s" ] || : > ".secrets/$s"
+done
+chmod 600 .secrets/* 2>/dev/null || true
+echo "[e2e] .secrets 占位就绪（E2E 不用真实算力 key）"
+
 echo "[e2e] docker compose up -d --build"
 docker compose up -d --build
 
