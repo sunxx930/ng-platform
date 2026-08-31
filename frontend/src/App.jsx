@@ -178,6 +178,36 @@ function App() {
       <div className="layout">
         {/* 左：项目 + agent + 算力 */}
         <aside className="sidebar">
+          <h3>算力</h3>
+          <div className="llm">
+            <select value={llm.provider} onChange={(e) => {
+              const p = providers.find((x) => x.id === e.target.value)
+              setLlm({ provider: e.target.value, api_key: '', model: p?.default_model || '', base_url: p?.base_url || '' })
+            }}>
+              {['一线', '二线', '本地'].map((tier) => (
+                <optgroup key={tier} label={tier}>
+                  {providers.filter((p) => p.tier === tier).map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <input type="password" placeholder="API key" value={llm.api_key} onChange={(e) => setLlm({ ...llm, api_key: e.target.value })} />
+            <input placeholder="模型" value={llm.model} onChange={(e) => setLlm({ ...llm, model: e.target.value })} />
+            {llm.base_url && <input placeholder="base_url" value={llm.base_url} onChange={(e) => setLlm({ ...llm, base_url: e.target.value })} />}
+            <button onClick={saveLlm}>保存算力配置</button>
+            {llmCurrent && <div className="p-sub">当前: {llmCurrent.provider} · {llmCurrent.model || '-'} · key {llmCurrent.api_key_set ? '✓' : '✗'}</div>}
+          </div>
+          <div className="usage">
+            <div className="usage-head">
+              <span>上下文用量</span>
+              <span>{fmtTokens(usedTokens)} / {fmtTokens(limit)}</span>
+            </div>
+            <div className="usage-bar"><div className="usage-fill" style={{ width: `${usagePct}%` }} /></div>
+            {usagePct > 80 && <div className="usage-warn">⚠ 接近 1M 上限，长任务将自动压缩上下文</div>}
+            <div className="p-sub">{usage?.calls || 0} 次调用 · 输入 {fmtTokens(usage?.input_tokens || 0)} · 输出 {fmtTokens(usage?.output_tokens || 0)}</div>
+          </div>
+
           <h3>项目</h3>
           {projects.length === 0 ? (
             <div className="empty">还没有项目，上面提个需求就开始了</div>
@@ -214,35 +244,6 @@ function App() {
             ))}
           </ul>
 
-          <h3>算力</h3>
-          <div className="llm">
-            <select value={llm.provider} onChange={(e) => {
-              const p = providers.find((x) => x.id === e.target.value)
-              setLlm({ provider: e.target.value, api_key: '', model: p?.default_model || '', base_url: p?.base_url || '' })
-            }}>
-              {['一线', '二线', '本地'].map((tier) => (
-                <optgroup key={tier} label={tier}>
-                  {providers.filter((p) => p.tier === tier).map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-            <input type="password" placeholder="API key" value={llm.api_key} onChange={(e) => setLlm({ ...llm, api_key: e.target.value })} />
-            <input placeholder="模型" value={llm.model} onChange={(e) => setLlm({ ...llm, model: e.target.value })} />
-            {llm.base_url && <input placeholder="base_url" value={llm.base_url} onChange={(e) => setLlm({ ...llm, base_url: e.target.value })} />}
-            <button onClick={saveLlm}>保存算力配置</button>
-            {llmCurrent && <div className="p-sub">当前: {llmCurrent.provider} · {llmCurrent.model || '-'} · key {llmCurrent.api_key_set ? '✓' : '✗'}</div>}
-          </div>
-          <div className="usage">
-            <div className="usage-head">
-              <span>上下文用量</span>
-              <span>{fmtTokens(usedTokens)} / {fmtTokens(limit)}</span>
-            </div>
-            <div className="usage-bar"><div className="usage-fill" style={{ width: `${usagePct}%` }} /></div>
-            {usagePct > 80 && <div className="usage-warn">⚠ 接近 1M 上限，长任务将自动压缩上下文</div>}
-            <div className="p-sub">{usage?.calls || 0} 次调用 · 输入 {fmtTokens(usage?.input_tokens || 0)} · 输出 {fmtTokens(usage?.output_tokens || 0)}</div>
-          </div>
         </aside>
 
         {/* 右：看板 */}
