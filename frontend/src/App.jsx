@@ -86,7 +86,7 @@ function App() {
     const done = () => api('/agents', token).then((d) => setAgents(d.agents || []))
     if (item.id) {
       return fetch(`/api/agents/templates/${item.id}/instantiate`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
-        .then(() => { done(); showToast(`已添加 ${item.name}`) })
+        .then(() => { done(); showToast(`已添加 ${item.name}——提需求时提到它的领域，就会自动派活`) })
         .catch((e) => setError(String(e)))
     }
     const q = new URLSearchParams({ name: item.reg.name, capability: item.reg.capability || '', role: item.reg.role || '', executor: 'builtin' })
@@ -172,7 +172,9 @@ function App() {
               <li key={a.key}>
                 <div className="a-name">{a.name}</div>
                 <div className="a-desc">{a.desc}</div>
-                <button className="mini" onClick={() => addAgent(a)}>＋</button>
+                {a.reg
+                  ? <span className="added-badge">已添加</span>
+                  : <button className="mini" title="添加到平台" onClick={() => addAgent(a)}>＋</button>}
               </li>
             ))}
           </ul>
