@@ -52,7 +52,8 @@ body {
 .token { width: 200px; }
 
 input, select, textarea {
-  background: rgba(7,10,18,.7); border: 1px solid var(--line-2); color: var(--text);
+  background: linear-gradient(180deg, rgba(109,124,255,.07), rgba(79,172,254,.03)), rgba(7,10,18,.7);
+  border: 1px solid rgba(109,124,255,.22); color: var(--text);
   padding: 9px 12px; border-radius: var(--radius-sm); font: inherit; transition: border-color .15s, box-shadow .15s;
 }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(109,124,255,.15); }
