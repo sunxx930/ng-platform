@@ -106,7 +106,7 @@ function App() {
           <div className="logo">🐳</div>
           <div className="brand-text">
             <div className="brand-name"><span className="accent">NG</span> AI Platform</div>
-            <div className="tagline">给一个目标，平台自己组队干活</div>
+            <div className="tagline">给一个目标，得到你想要的</div>
           </div>
         </div>
         <div className="toolbar">
