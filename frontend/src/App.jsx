@@ -71,8 +71,9 @@ function App() {
   }
 
   function archiveProject(pid) {
+    if (!window.confirm('确定终止并删除这个项目？（审计事件保留，项目从看板移除）')) return
     fetch(`/api/projects/${pid}/archive`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
-      .then(() => loadProjects())
+      .then((r) => { if (!r.ok) throw new Error('删除失败，可能 token 权限不足'); loadProjects() })
       .catch((e) => setError(String(e)))
   }
 
@@ -171,7 +172,7 @@ function App() {
                   onClick={() => loadDetail(p.project_id)}>
                 <div className="p-title">{p.title}</div>
                 <div className="p-sub">{p.status} · {p.goal?.slice(0, 24)}
-                  <button className="mini" onClick={(e) => { e.stopPropagation(); archiveProject(p.project_id) }}>🗑</button>
+                  <button className="mini" title="终止/删除项目" onClick={(e) => { e.stopPropagation(); archiveProject(p.project_id) }}>删除</button>
                 </div>
               </li>
             ))}

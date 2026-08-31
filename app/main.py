@@ -102,14 +102,13 @@ def list_projects(auth: dict = Depends(require_auth)):
 
 @app.post("/projects/{pid}/archive")
 def archive_project(pid: str, auth: dict = Depends(require_auth)):
-    """归档项目（从看板列表移除；测试/废弃项目清理用）。"""
-    if int(auth["level"]) < int(perm.Level.L3_FLOW):
-        raise HTTPException(403, "权限不足: archive_project 需 L3_FLOW")
+    """终止/删除项目：使用者（owner，L1）随时有权。从看板移除，事件留审计（append-only）。"""
+    require_level("read_project", auth["level"])   # L1：owner 随时可终止/删除
     evs = log.replay(project_id=pid)
     if not any(e["event_type"] == events.EventType.PROJECT_CREATED.value for e in evs):
         raise HTTPException(404, "project not found")
-    log.append(events.new_event(events.EventType.PROJECT_ARCHIVED, "user",
-                                {}, project_id=pid,
+    log.append(events.new_event(events.EventType.PROJECT_ARCHIVED, f"user:{auth['user']}",
+                                {"reason": "owner_terminated"}, project_id=pid,
                                 idempotency_key=f"archive:{pid}"))
     return {"project_id": pid, "status": "archived"}
 
