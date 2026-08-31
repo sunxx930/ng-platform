@@ -35,7 +35,9 @@ def test_db_event_append_and_idempotency(db_log):
     app_log.append(e1)
     app_log.append(dict(e1))   # 同 key 再写 → 幂等
     rows = app_log.replay(project_id="11111111-1111-1111-1111-111111111111")
-    assert len(rows) == 1, f"幂等应 1 条，实际 {len(rows)}"
+    # 按幂等键计数（该 project 可能有归档等其他事件，不参与幂等断言）
+    n = sum(1 for r in rows if r.get("idempotency_key") == "db-test-1")
+    assert n == 1, f"幂等应 1 条，实际 {n}"
 
 
 def test_db_append_only_trigger(db_log):
