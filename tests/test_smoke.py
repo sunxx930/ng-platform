@@ -580,9 +580,9 @@ def test_instantiate_template(client):
     """一键注册 preagent 模板 → 平台 agent（英文名，可匹配派活）。"""
     r = client.post("/agents/templates/excel-expert/instantiate", headers=H1)
     assert r.status_code == 200
-    assert r.json()["name"] == "Excel Expert"
+    assert r.json()["name"] == "Excel专家"
     agents = client.get("/agents", headers=H1).json()["agents"]
-    excel = next((a for a in agents if a["name"] == "Excel Expert"), None)
+    excel = next((a for a in agents if a["name"] == "Excel专家"), None)
     assert excel is not None
     assert excel["executor"] == "builtin"
 

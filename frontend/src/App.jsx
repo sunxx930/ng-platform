@@ -79,7 +79,9 @@ function App() {
   const ngAgents = agents.filter((a) => (a.executor || 'builtin') === 'builtin')
 
   function capName(n) {
-    return String(n || '').split(/[-_\s]+/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+    return String(n || '').split(/[-_\s]+/).filter(Boolean)
+      .map((w) => (w.toLowerCase() === 'ng' ? 'NG' : w.charAt(0).toUpperCase() + w.slice(1)))
+      .join(' ')
   }
 
   // 合并注册 agent + 模板为一个 Agent 列表；英文名首字母大写 + 介绍下一行；已注册的模板不重复给＋
