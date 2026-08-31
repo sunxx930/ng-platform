@@ -84,6 +84,15 @@ class AutoAgentWorker(Worker):
             project_id=ctx["project_id"], task_id=tid,
             idempotency_key=f"deliverableadv:{tid}:" + hashlib.sha256(
                 f"done|{result['file_ref']}".encode()).hexdigest()[:10]))
+        # 记录 LLM 用量（1M 上下文限制展示）
+        for u in (result.get("usage") or []):
+            self._log.append(events.new_event(
+                events.EventType.USAGE_RECORDED, "llm",
+                {"provider": u.get("provider"), "model": u.get("model"),
+                 "input_tokens": u.get("input_tokens", 0),
+                 "output_tokens": u.get("output_tokens", 0), "label": "agent_execute"},
+                project_id=ctx["project_id"], task_id=tid,
+                idempotency_key=f"usage:agent_execute:{int(u.get('ts', 0))}"))
         # P1 修复（2026-08-31）：与 API submit_deliverable 一致——done 交接复核时触发 review.requested
         self._ensure_review_requested(tid, ctx["project_id"])
         print(f"[auto_agent] {tid} 自动完成产出 → in_review"

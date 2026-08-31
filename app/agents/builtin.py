@@ -48,4 +48,4 @@ class BuiltinAgent:
         file_ref = f"artifacts/{task.task_id}.md"
         (self._artifacts / f"{task.task_id}.md").write_text(content, encoding="utf-8")
         return {"file_ref": file_ref, "summary": f"已产出《{task.title}》交付文档",
-                "content_len": len(content)}
+                "content_len": len(content), "usage": self._llm.usage()}

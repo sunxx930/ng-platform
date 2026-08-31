@@ -51,6 +51,7 @@ function App() {
   const [llm, setLlm] = useState({ provider: 'openai', api_key: '', model: '', base_url: '' })
   const [llmCurrent, setLlmCurrent] = useState(null)
   const [providers, setProviders] = useState([])
+  const [usage, setUsage] = useState(null)
   const [goal, setGoal] = useState('')
   const [goalTitle, setGoalTitle] = useState('')
   const [goalLoading, setGoalLoading] = useState(false)
@@ -73,6 +74,12 @@ function App() {
   useEffect(() => { api('/agents/templates', token).then((d) => setTemplates(d.templates || [])).catch(() => {}) }, [token])
   useEffect(() => { api('/agents/llm-config', token).then(setLlmCurrent).catch(() => {}) }, [token])
   useEffect(() => { api('/agents/providers', token).then((d) => setProviders(d.providers || [])).catch(() => {}) }, [token])
+  useEffect(() => { api('/usage', token).then(setUsage).catch(() => {}) }, [token])
+
+  const fmtTokens = (n) => n >= 1000000 ? `${(n / 1000000).toFixed(2)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+  const usedTokens = usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : 0
+  const limit = usage?.context_limit || 1000000
+  const usagePct = Math.min(100, (usedTokens / limit) * 100)
 
   function submitGoal() {
     if (!goal.trim()) return
@@ -226,6 +233,15 @@ function App() {
             {llm.base_url && <input placeholder="base_url" value={llm.base_url} onChange={(e) => setLlm({ ...llm, base_url: e.target.value })} />}
             <button onClick={saveLlm}>保存算力配置</button>
             {llmCurrent && <div className="p-sub">当前: {llmCurrent.provider} · {llmCurrent.model || '-'} · key {llmCurrent.api_key_set ? '✓' : '✗'}</div>}
+          </div>
+          <div className="usage">
+            <div className="usage-head">
+              <span>上下文用量</span>
+              <span>{fmtTokens(usedTokens)} / {fmtTokens(limit)}</span>
+            </div>
+            <div className="usage-bar"><div className="usage-fill" style={{ width: `${usagePct}%` }} /></div>
+            {usagePct > 80 && <div className="usage-warn">⚠ 接近 1M 上限，长任务将自动压缩上下文</div>}
+            <div className="p-sub">{usage?.calls || 0} 次调用 · 输入 {fmtTokens(usage?.input_tokens || 0)} · 输出 {fmtTokens(usage?.output_tokens || 0)}</div>
           </div>
         </aside>
 

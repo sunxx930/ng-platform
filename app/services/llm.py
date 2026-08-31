@@ -104,9 +104,13 @@ class LLMClient:
         for attempt in range(1, self.cfg.max_retries + 1):
             try:
                 data, status = self._call(payload)
+                u = data.get("usage") or {}
+                # openai 用 prompt/completion_tokens，anthropic 用 input/output_tokens
                 self._usage.append({"provider": self.cfg.provider,
                                     "model": data.get("model") or self.cfg.model,
-                                    "ts": time.time(), "status": status})
+                                    "ts": time.time(), "status": status,
+                                    "input_tokens": u.get("input_tokens") or u.get("prompt_tokens") or 0,
+                                    "output_tokens": u.get("output_tokens") or u.get("completion_tokens") or 0})
                 return self._extract_text(data)
             except Exception as e:      # noqa: BLE001 —— 逐次重试
                 last_err = e

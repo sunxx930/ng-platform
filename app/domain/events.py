@@ -25,6 +25,7 @@ class EventType(str, Enum):
     AGENT_REGISTERED = "agent.registered"     # agent 注册中心（事件溯源，可审计）
     GOAL_PARSED = "goal.parsed"               # 需求解析：用户目标 → 任务草案
     FEEDBACK_SUBMITTED = "feedback.submitted" # 试用者反馈
+    USAGE_RECORDED = "usage.recorded"         # LLM 用量（token）记录
 
 
 import time

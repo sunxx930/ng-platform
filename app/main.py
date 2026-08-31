@@ -186,7 +186,9 @@ def _parse_and_create(pid: str, goal: str) -> list[dict]:
     # 避免 LLM 凭名字推荐外部 openclaw agent → 任务卡等外部执行
     builtin_names = [a["name"] for a in agents
                      if a.get("executor", "builtin") == "builtin"]
-    parsed = RequirementParser(LLMClient()).parse_goal(goal, builtin_names)
+    _llm = LLMClient()
+    parsed = RequirementParser(_llm).parse_goal(goal, builtin_names)
+    _record_usage(pid, None, _llm.usage(), "requirement_parse")
     log.append(events.new_event(
         events.EventType.GOAL_PARSED, "system",
         {"summary": parsed.summary, "tasks": [t.title for t in parsed.tasks]},
@@ -413,6 +415,41 @@ def list_feedback(auth: dict = Depends(require_auth)):
                           "contact": p.get("contact", ""), "rating": p.get("rating"),
                           "ts": e.get("created_at_ts")})
     return {"feedback": list(reversed(items))}
+
+
+# ---------- LLM 用量（1M 上下文限制展示） ----------
+def _record_usage(project_id: str | None, task_id: str | None,
+                  usage_list: list[dict], label: str):
+    """把 LLMClient 的每次调用用量持久化为 usage.recorded 事件（审计）。"""
+    for u in usage_list:
+        log.append(events.new_event(
+            events.EventType.USAGE_RECORDED, "llm",
+            {"provider": u.get("provider"), "model": u.get("model"),
+             "input_tokens": u.get("input_tokens", 0),
+             "output_tokens": u.get("output_tokens", 0), "label": label},
+            project_id=project_id, task_id=task_id,
+            idempotency_key=f"usage:{label}:{int(u.get('ts', 0))}"))
+
+
+@app.get("/usage")
+def get_usage(auth: dict = Depends(require_auth)):
+    """LLM 用量聚合（1M 上下文限制：展示已用 vs 上限，应对=接近时预警）。"""
+    require_level("read_audit", auth["level"])
+    rows = [e for e in log.replay()
+            if e["event_type"] == events.EventType.USAGE_RECORDED.value]
+    tin = sum(e["payload"].get("input_tokens", 0) for e in rows)
+    tout = sum(e["payload"].get("output_tokens", 0) for e in rows)
+    by_label: dict[str, dict] = {}
+    for e in rows:
+        p = e["payload"]
+        b = by_label.setdefault(p.get("label", "?"),
+                                {"calls": 0, "input_tokens": 0, "output_tokens": 0})
+        b["calls"] += 1
+        b["input_tokens"] += p.get("input_tokens", 0)
+        b["output_tokens"] += p.get("output_tokens", 0)
+    return {"calls": len(rows), "input_tokens": tin, "output_tokens": tout,
+            "context_limit": 1_000_000,   # 1M token 上下文窗口
+            "by_label": by_label}
 
 
 # ---------- preagent 模板库 ----------

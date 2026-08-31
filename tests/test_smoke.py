@@ -465,6 +465,7 @@ def test_agent_register_and_list(client):
 def test_message_parse_creates_tasks(client, monkeypatch):
     """前门：用户给目标 → 需求解析(LLM mock) → 团队匹配 → 自动建任务+责任链。"""
     class _FakeLLM:
+        def usage(self): return []
         def parse_json(self, system, user, **kw):
             return {"summary": "写 BTC 周报",
                     "tasks": [{"title": "分析 BTC 周走势", "description": "看数据",
@@ -502,6 +503,7 @@ def test_builtin_agent_executes(tmp_path):
     """NG 自研 agent：用算力产出交付物并落盘（mock LLM）。"""
     from app.agents.builtin import BuiltinAgent, TaskContext
     class _FakeLLM:
+        def usage(self): return []
         def complete(self, system, user, **kw):
             return "# 交付文档\n\n内容"
     agent = BuiltinAgent(llm=_FakeLLM(), artifacts_dir=tmp_path / "artifacts")
@@ -528,6 +530,7 @@ def test_builtin_agent_closed_loop(client, tmp_path):
     """自研 agent 全链：产出 → 回报平台 → 自动交接复核（in_review）。"""
     from app.agents.builtin import BuiltinAgent, TaskContext
     class _FakeLLM:
+        def usage(self): return []
         def complete(self, system, user, **kw):
             return "# 交付\n内容"
     pid = _project(client)
@@ -627,6 +630,15 @@ def test_feedback_submit_and_list(client):
     assert r.status_code == 200
     items = client.get("/feedback", headers=H1).json()["feedback"]
     assert any(i["content"] == "界面很漂亮" and i["contact"] == "wx" for i in items)
+
+
+def test_usage_get(client):
+    """用量聚合：GET /usage 返回调用数/token/1M 上下文限制。"""
+    r = client.get("/usage", headers=H1)
+    assert r.status_code == 200
+    d = r.json()
+    assert d["context_limit"] == 1_000_000
+    assert "calls" in d and "input_tokens" in d and "output_tokens" in d
 
 
 def test_feedback_empty_rejected(client):
