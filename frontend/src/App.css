@@ -79,7 +79,8 @@ button.mini.danger:hover { color: var(--danger); border-color: var(--danger); }
 .t-actions { margin-top: 8px; display: flex; gap: 6px; align-items: center; }
 select.advance { background: var(--bg-soft); border: 1px solid var(--line); color: var(--text); padding: 2px 8px; border-radius: 6px; font-size: 12px; }
 
-.error { background: rgba(248,113,113,.08); border: 1px solid rgba(248,113,113,.3); color: #fca5a5; padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 14px; }
+.error { display: flex; justify-content: space-between; align-items: center; gap: 10px; background: rgba(248,113,113,.08); border: 1px solid rgba(248,113,113,.3); color: #fca5a5; padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 14px; }
+.error .mini { flex-shrink: 0; }
 
 /* Hero 提需求 */
 .hero { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 26px 28px; margin-bottom: 20px;

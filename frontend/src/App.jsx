@@ -81,14 +81,16 @@ function App() {
 
   useEffect(() => { api('/auth/me', token).then(setMe).catch(() => setMe(null)) }, [token])
 
-  function loadProjects() { api('/projects', token).then((d) => setProjects(d.projects || [])).catch((e) => setError(errMsg(e))) }
+  function loadProjects() {
+    api('/projects', token).then((d) => { setProjects(d.projects || []); setError('') }).catch((e) => setError(errMsg(e)))
+  }
   useEffect(loadProjects, [token])
 
   function loadDetail(pid) {
     setSelected(pid)
     setDetail(null)
     Promise.all([api(`/projects/${pid}/tasks`, token), api(`/projects/${pid}/audit`, token)])
-      .then(([t, a]) => setDetail({ tasks: t.tasks || [], audit: a.events || [] }))
+      .then(([t, a]) => { setDetail({ tasks: t.tasks || [], audit: a.events || [] }); setError('') })
       .catch((e) => setError(errMsg(e)))
   }
 
@@ -206,7 +208,12 @@ function App() {
         </div>
       </header>
 
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <div className="error" data-testid="error-banner">
+          <span>{error}</span>
+          <button className="mini" data-testid="dismiss-error" onClick={() => setError('')}>×</button>
+        </div>
+      )}
 
       {/* Hero：提需求 */}
       <section className="hero">
