@@ -75,7 +75,7 @@ button.mini:hover { color: var(--accent); border-color: var(--accent); }
 
 /* 布局 */
 .layout { display: grid; grid-template-columns: 330px 1fr; gap: 24px; align-items: start; }
-.sidebar { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; backdrop-filter: blur(14px); position: sticky; top: 24px; max-height: calc(100vh - 48px); overflow-y: auto; }
+.sidebar { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; backdrop-filter: blur(14px); }
 .sidebar h3 { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 1.4px; margin: 20px 0 10px; }
 .sidebar h3:first-child { margin-top: 0; }
 .sidebar ul { list-style: none; margin: 0; padding: 0; }
