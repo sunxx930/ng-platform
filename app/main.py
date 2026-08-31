@@ -257,6 +257,23 @@ def list_agents(auth: dict = Depends(require_auth)):
     return {"agents": _agents_registry()}
 
 
+@app.post("/agents/{name}/deactivate")
+def deactivate_agent(name: str, auth: dict = Depends(require_auth)):
+    """从平台移除 agent（latest-wins 注册 status=disabled，事件留审计）。"""
+    require_level("write_message", auth["level"])
+    registry = {a["name"]: a for a in _agents_registry()}
+    if name not in registry:
+        raise HTTPException(404, f"agent {name} 未注册")
+    log.append(events.new_event(
+        events.EventType.AGENT_REGISTERED, f"user:{auth['user']}",
+        {"name": name, "capability": registry[name].get("capability", ""),
+         "role": registry[name].get("role", ""), "status": "disabled",
+         "permission": registry[name].get("permission", "L1"),
+         "executor": registry[name].get("executor", "builtin")},
+        idempotency_key=f"agentreg:{name}:disabled"))
+    return {"name": name, "status": "disabled"}
+
+
 # ---------- LLM 算力配置（前端下拉选 provider + 输 API key） ----------
 class LLMConfigIn(BaseModel):
     provider: str

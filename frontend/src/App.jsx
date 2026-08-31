@@ -92,7 +92,7 @@ function App() {
     api(`/projects/${pid}/archive`, token, { method: 'POST' }).then(() => loadProjects()).catch((e) => setError(String(e)))
   }
 
-  const ngAgents = agents.filter((a) => (a.executor || 'builtin') === 'builtin' && a.name !== 'ng-assistant')
+  const ngAgents = agents.filter((a) => (a.executor || 'builtin') === 'builtin' && a.status !== 'disabled' && a.name !== 'ng-assistant')
   const capName = (n) => String(n || '').split(/[-_\s]+/).filter(Boolean)
     .map((w) => (w.toLowerCase() === 'ng' ? 'NG' : w.charAt(0).toUpperCase() + w.slice(1))).join(' ')
   const regNames = new Set(ngAgents.map((a) => a.name))
@@ -103,6 +103,12 @@ function App() {
   ].sort((a, b) => (a.name === 'NG助理' ? -1 : b.name === 'NG助理' ? 1 : 0))
 
   function showToast(msg) { setToast(msg); setTimeout(() => setToast(''), 2200) }
+
+  function deactivateAgent(name) {
+    api(`/agents/${encodeURIComponent(name)}/deactivate`, token, { method: 'POST' })
+      .then(() => { api('/agents', token).then((d) => setAgents(d.agents || [])); showToast(`已移除 ${name}，可在模板里重新添加`) })
+      .catch((e) => setError(String(e)))
+  }
 
   function addAgent(item) {
     const done = () => api('/agents', token).then((d) => setAgents(d.agents || []))
@@ -195,7 +201,7 @@ function App() {
                 <div className="a-name">{a.name}</div>
                 <div className="a-desc">{a.desc}</div>
                 {a.reg
-                  ? <span className="added-badge">已添加</span>
+                  ? <button className="mini remove" title="移除" onClick={() => deactivateAgent(a.reg.name)}>✕</button>
                   : <button className="mini" title="添加到平台" onClick={() => addAgent(a)}>＋</button>}
               </li>
             ))}

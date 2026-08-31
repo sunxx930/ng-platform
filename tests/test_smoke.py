@@ -634,6 +634,17 @@ def test_feedback_empty_rejected(client):
     assert r.status_code == 400
 
 
+def test_deactivate_agent(client):
+    """移除 agent：deactivate → latest-wins status=disabled（可再添加）。"""
+    client.post("/agents/templates/tax-advisor/instantiate", headers=H1)
+    r = client.post("/agents/税务顾问/deactivate", headers=H1)
+    assert r.status_code == 200
+    assert r.json()["status"] == "disabled"
+    agents = client.get("/agents", headers=H1).json()["agents"]
+    advisor = next((a for a in agents if a["name"] == "税务顾问"), None)
+    assert advisor["status"] == "disabled"
+
+
 def test_auto_agent_is_builtin_latest_wins(client, tmp_path, monkeypatch):
     """P0：_is_builtin 取最新注册（先 builtin 后 openclaw → 判 openclaw，不误执行）。"""
     from app.storage.event_log import EventLog
