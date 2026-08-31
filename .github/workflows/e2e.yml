@@ -1,0 +1,25 @@
+# CI 复跑 Docker E2E —— 待 git 仓库初始化并推送后启用（当前项目尚未 git init）
+# 覆盖三签阻塞项回归：P0 密钥契约 / P1 幂等反例 / 全栈冒烟
+name: docker-e2e
+
+on:
+  workflow_dispatch:          # 手动触发
+  push:
+    paths:
+      - 'app/**'
+      - 'migrations/**'
+      - 'scripts/docker_e2e.sh'
+      - 'docker-compose.yml'
+      - 'Dockerfile'
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest     # GitHub runner 自带 docker
+    steps:
+      - uses: actions/checkout@v4
+      - name: 生成随机密钥（非阻塞项：POSTGRES/NG_APP 密码由 CI 注入）
+        run: |
+          echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+          echo "NG_APP_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+      - name: 运行 Docker E2E（脚本自动生成强随机 token）
+        run: bash scripts/docker_e2e.sh

@@ -1,0 +1,14 @@
+# 锁定版本（2026-08-31，P0 可重建）。fresh build 曾因 files.pythonhosted.org 下载超时失败，
+# 非解析冲突；Dockerfile 已配清华源镜像 + 长 timeout。
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+sqlalchemy==2.0.52
+psycopg[binary]==3.3.4
+pgvector==0.5.0
+pydantic==2.13.5
+python-dotenv==1.2.3
+httpx==0.28.1
+anthropic==1.2.0
+# anthropic 1.2.0 走 httpx2/httpcore2（新包），与经典 httpx 共存，显式锁定保证可重建
+httpx2==2.12.0
+httpcore2==2.12.0

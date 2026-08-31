@@ -1,0 +1,10 @@
+# 挡 Dockerfile COPY . . —— 124M .venv 绝不能进镜像
+.venv
+data
+.pytest_cache
+__pycache__
+*.pyc
+.git
+.env
+.DS_Store
+tests

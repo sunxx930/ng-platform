@@ -1,0 +1,90 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ng
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?必须注入}
+      POSTGRES_DB: ng_platform
+    # 端口收敛：db 不向宿主发布，仅 compose 内部网络（api/workers/migrate 通过 db:5432 连）
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ng"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build: .
+    environment:
+      # 显式生产模式：run_migrations 在 NG_ENV=production 下强制要求 NG_APP_PASSWORD
+      NG_ENV: production
+      MIGRATION_DATABASE_URL: postgresql+psycopg://ng:${POSTGRES_PASSWORD:?}@db:5432/ng_platform
+      # P0 密钥契约：run_migrations 的 ALTER ROLE 必须用与 api 相同的 NG_APP_PASSWORD，
+      # 否则 ng_app 密码回退 'ng' 而 api 用宿主注入值 → 认证失败
+      NG_APP_PASSWORD: ${NG_APP_PASSWORD:?}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python run_migrations.py
+
+  api:
+    build: .
+    environment:
+      # 显式生产模式：auth 严格模式，token 缺失/默认值 → 拒绝启动
+      NG_ENV: production
+      DATABASE_URL: postgresql+psycopg://ng_app:${NG_APP_PASSWORD:?}@db:5432/ng_platform
+      NG_LEVEL3_TOKEN: ${NG_LEVEL3_TOKEN:?必须注入强随机 token}
+      NG_LEVEL1_TOKEN: ${NG_LEVEL1_TOKEN:?必须注入强随机 token}
+      OPENCLAW_BIN: openclaw
+      OPENCLAW_SHARED_DIR: /shared/messages
+      # 底层算力接入：只要用户有 API 就接得进（可选，未设则算力功能不可用）
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ~/.openclaw/shared/messages:/shared/messages:rw
+    ports:
+      - "127.0.0.1:8000:8000"   # 端口收敛：仅绑定本机回环，不暴露到局域网
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  workers:
+    build: .
+    environment:
+      NG_ENV: production
+      DATABASE_URL: postgresql+psycopg://ng_app:${NG_APP_PASSWORD:?}@db:5432/ng_platform
+      # TransferEscalationWorker 需要读共享转移消息
+      OPENCLAW_SHARED_DIR: /shared/messages
+      # 底层算力接入：容器内 AutoAgentWorker 要跑真实 agent-run
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ~/.openclaw/shared/messages:/shared/messages:rw
+      - ./artifacts:/app/artifacts:rw   # P1：自研 agent 产出持久卷，容器销毁不丢
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: python -m app.workers
+
+volumes:
+  pgdata:
