@@ -34,6 +34,7 @@ function App() {
   const [goalLoading, setGoalLoading] = useState(false)
   const [showFb, setShowFb] = useState(false)
   const [fb, setFb] = useState({ content: '', contact: '', rating: null })
+  const [toast, setToast] = useState('')
 
   function loadProjects() { api('/projects', token).then((d) => setProjects(d.projects || [])).catch((e) => setError(String(e))) }
   useEffect(loadProjects, [token])
@@ -79,14 +80,19 @@ function App() {
       .map((t) => ({ key: 't-' + t.id, id: t.id, name: t.name, desc: t.desc })),
   ].sort((a, b) => (a.name === 'NG助理' ? -1 : b.name === 'NG助理' ? 1 : 0))
 
+  function showToast(msg) { setToast(msg); setTimeout(() => setToast(''), 2200) }
+
   function addAgent(item) {
+    const done = () => api('/agents', token).then((d) => setAgents(d.agents || []))
     if (item.id) {
       return fetch(`/api/agents/templates/${item.id}/instantiate`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
-        .then(() => api('/agents', token).then((d) => setAgents(d.agents || []))).catch((e) => setError(String(e)))
+        .then(() => { done(); showToast(`已添加 ${item.name}`) })
+        .catch((e) => setError(String(e)))
     }
     const q = new URLSearchParams({ name: item.reg.name, capability: item.reg.capability || '', role: item.reg.role || '', executor: 'builtin' })
     return fetch(`/api/agents/register?${q}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
-      .then(() => api('/agents', token).then((d) => setAgents(d.agents || []))).catch((e) => setError(String(e)))
+      .then(() => { done(); showToast(`${item.name} 已在平台`) })
+      .catch((e) => setError(String(e)))
   }
 
   function saveLlm() {
@@ -254,6 +260,8 @@ function App() {
           )}
         </main>
       </div>
+
+      {toast && <div className="toast">{toast}</div>}
 
       {showFb && (
         <div className="modal" onClick={() => setShowFb(false)}>

@@ -150,3 +150,9 @@ button.mini:hover { color: var(--accent); border-color: var(--accent); }
 .stars span { cursor: pointer; color: var(--dim); transition: color .12s, transform .12s; display: inline-block; }
 .stars span:hover, .stars span.on { color: var(--warn); transform: scale(1.15); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Toast */
+.toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); background: var(--panel-solid);
+  border: 1px solid var(--line-2); color: var(--text); padding: 10px 20px; border-radius: 30px; font-size: 13px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.5); z-index: 30; animation: toast-in .2s ease; }
+@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
