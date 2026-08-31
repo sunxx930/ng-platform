@@ -86,7 +86,9 @@ select.advance { background: var(--bg-soft); border: 1px solid var(--line); colo
 .hero::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse 60% 80% at 20% 0%, rgba(109,124,255,.12), transparent); pointer-events: none; }
 .hero-title { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
 .hero-sub { color: var(--muted); margin-bottom: 16px; }
-.hero input, .hero textarea { width: 100%; margin-bottom: 12px; background: rgba(7,10,18,.55); }
+.hero input, .hero textarea { width: 100%; margin-bottom: 12px; border: 1px solid rgba(109,124,255,.35);
+  background: linear-gradient(180deg, rgba(109,124,255,.09), rgba(79,172,254,.03)), rgba(7,10,18,.55); transition: border-color .15s, box-shadow .15s; }
+.hero input:focus, .hero textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(109,124,255,.16); }
 .hero-actions { display: flex; justify-content: flex-end; }
 
 /* 布局 */
