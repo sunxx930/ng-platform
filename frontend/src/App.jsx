@@ -1,6 +1,28 @@
 import { useEffect, useState } from 'react'
 import './App.css'
 
+const EVENT_LABEL = {
+  'project.created': '创建项目', 'task.created': '创建任务', 'task.state_changed': '状态流转',
+  'deliverable.submitted': '提交产出', 'review.requested': '请求复核', 'review.decided': '复核结论',
+  'approval.requested': '请求审批', 'approval.decided': '审批决策', 'agent.assigned': '指派 Agent',
+  'agent.transferred': '转移任务', 'agent.registered': '注册 Agent', 'goal.parsed': '解析需求',
+  'message.aggregated': '收到消息', 'feedback.submitted': '收到反馈', 'project.paused': '项目暂停',
+  'project.archived': '项目终止',
+}
+function evSummary(e) {
+  const p = e.payload || {}
+  const s = STATUS[p.to]?.cn || STATUS[p.to] || ''
+  const map = {
+    'task.state_changed': p.to ? `→ ${s}` : '',
+    'deliverable.submitted': p.file_ref ? `产出：${p.file_ref}` : '',
+    'agent.assigned': p.agent ? `给 ${p.agent}` : '',
+    'goal.parsed': p.summary ? `已拆出 ${(p.tasks || []).length} 个任务` : '',
+    'approval.decided': p.result === 'approve' ? '已批准' : '已拒绝',
+    'review.decided': p.verdict ? `结论：${p.verdict}` : '',
+  }
+  return map[e.event_type] || ''
+}
+
 const STATUS = {
   todo: { cn: '待办', cls: 'todo' },
   in_progress: { cn: '进行中', cls: 'doing' },
@@ -249,12 +271,13 @@ function App() {
                 </div>
               )}
 
-              <h2>审计</h2>
+              <h2>审计记录</h2>
               <div className="audit">
-                {audit.map((e, i) => (
+                {audit.length === 0 ? <div className="muted audit-empty">暂无记录</div> : audit.map((e, i) => (
                   <div className="ev" key={i}>
-                    <span className="ev-type">{e.event_type}</span>
-                    <span className="ev-pay">{JSON.stringify(e.payload || {}).slice(0, 70)}</span>
+                    <span className="ev-type">{EVENT_LABEL[e.event_type] || e.event_type}</span>
+                    {evSummary(e) && <span className="ev-pay">{evSummary(e)}</span>}
+                    <span className="ev-time">{new Date((e.created_at_ts || 0) * 1000).toLocaleTimeString()}</span>
                   </div>
                 ))}
               </div>
