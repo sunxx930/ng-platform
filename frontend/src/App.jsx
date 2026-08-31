@@ -78,6 +78,18 @@ function App() {
 
   const ngAgents = agents.filter((a) => (a.executor || 'builtin') === 'builtin')
 
+  function capName(n) {
+    return String(n || '').split(/[-_\s]+/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+  }
+
+  // 合并注册 agent + 模板为一个 Agent 列表；英文名首字母大写 + 介绍下一行；已注册的模板不重复给＋
+  const regNames = new Set(ngAgents.map((a) => a.name))
+  const combined = [
+    ...ngAgents.map((a) => ({ key: 'r-' + a.name, name: capName(a.name), desc: a.capability || a.role || '', canAdd: false })),
+    ...templates.filter((t) => !regNames.has(t.name) && !regNames.has(t.name_cn))
+      .map((t) => ({ key: 't-' + t.id, id: t.id, name: t.name, desc: t.desc, canAdd: true })),
+  ]
+
   function saveLlm() {
     fetch('/api/agents/llm-config', {
       method: 'POST',
@@ -154,18 +166,13 @@ function App() {
               </li>
             ))}
           </ul>
-          <h3>Agent（{ngAgents.length}）</h3>
+          <h3>Agent</h3>
           <ul className="agents">
-            {ngAgents.map((a) => (
-              <li key={a.name}><b>{a.name}</b> <span className="cap">{a.capability}</span></li>
-            ))}
-          </ul>
-          <h3>preagent 模板库（{templates.length}）</h3>
-          <ul className="agents">
-            {templates.map((t) => (
-              <li key={t.id}>
-                <span><b>{t.name}</b> <span className="cap">{t.capability.slice(0, 20)}</span></span>
-                <button className="mini" onClick={() => addTemplate(t.id)}>＋</button>
+            {combined.map((a) => (
+              <li key={a.key}>
+                <div className="a-name">{a.name}</div>
+                <div className="a-desc">{a.desc}</div>
+                {a.canAdd && <button className="mini" onClick={() => addTemplate(a.id)}>＋</button>}
               </li>
             ))}
           </ul>
