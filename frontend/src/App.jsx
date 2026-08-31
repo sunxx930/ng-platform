@@ -23,6 +23,14 @@ function evSummary(e) {
   return map[e.event_type] || ''
 }
 
+const LEGAL = {
+  todo: ['in_progress', 'cancelled'],
+  in_progress: ['in_review', 'blocked', 'cancelled'],
+  blocked: ['in_progress', 'cancelled'],
+  in_review: ['in_progress', 'pending_approval', 'completed'],
+  pending_approval: ['completed', 'in_progress', 'cancelled'],
+}
+
 const STATUS = {
   todo: { cn: '待办', cls: 'todo' },
   in_progress: { cn: '进行中', cls: 'doing' },
@@ -166,6 +174,13 @@ function App() {
     const q = new URLSearchParams({ file_ref: fileRef, verdict: 'done' }).toString()
     api(`/tasks/${tid}/deliverables?${q}`, token, { method: 'POST' })
       .then(() => { if (selected) loadDetail(selected); showToast('📄 产出已提交 → 待复核') })
+      .catch((e) => setError(errMsg(e)))
+  }
+
+  function advanceState(tid, to) {
+    const q = new URLSearchParams({ to }).toString()
+    api(`/tasks/${tid}/state?${q}`, token, { method: 'PATCH' })
+      .then(() => { if (selected) loadDetail(selected); showToast(`已推进到「${STATUS[to]?.cn || to}」`) })
       .catch((e) => setError(errMsg(e)))
   }
 
@@ -327,9 +342,16 @@ function App() {
                             {t.reviewer && <span className="who">🔍 {t.reviewer}</span>}
                             {t.has_deliverable && <span className="tag">📄 产出</span>}
                           </div>
-                          {t.status === 'in_progress' && (
+                          {LEGAL[t.status]?.length > 0 && (
                             <div className="t-actions">
-                              <button className="mini" onClick={() => submitDeliverable(t.task_id)}>提交产出</button>
+                              {t.status === 'in_progress' && (
+                                <button className="mini" onClick={() => submitDeliverable(t.task_id)}>提交产出</button>
+                              )}
+                              <select className="advance" value=""
+                                      onChange={(e) => e.target.value && advanceState(t.task_id, e.target.value)}>
+                                <option value="">推进…</option>
+                                {LEGAL[t.status].map((s) => <option key={s} value={s}>{STATUS[s].cn}</option>)}
+                              </select>
                             </div>
                           )}
                         </div>
