@@ -26,6 +26,9 @@ function App() {
   const [error, setError] = useState('')
   const [llm, setLlm] = useState({ provider: 'openai', api_key: '', model: '', base_url: '' })
   const [llmCurrent, setLlmCurrent] = useState(null)
+  const [providers, setProviders] = useState([])
+  const [goal, setGoal] = useState('')
+  const [goalTitle, setGoalTitle] = useState('')
 
   function loadProjects() {
     api('/projects', token).then((d) => setProjects(d.projects || [])).catch((e) => setError(String(e)))
@@ -53,6 +56,27 @@ function App() {
   }
 
   useEffect(() => { api('/agents/llm-config', token).then(setLlmCurrent).catch(() => {}) }, [token])
+  useEffect(() => { api('/agents/providers', token).then((d) => setProviders(d.providers || [])).catch(() => {}) }, [token])
+
+  function submitGoal() {
+    const q = new URLSearchParams({ title: goalTitle || '新需求', goal }).toString()
+    fetch(`/api/projects?${q}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((d) => {
+        const g = new URLSearchParams({ body: goal, parse: 'true' }).toString()
+        return fetch(`/api/projects/${d.project_id}/messages?${g}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+      })
+      .then(() => { loadProjects(); setGoal(''); setGoalTitle(''); })
+      .catch((e) => setError(String(e)))
+  }
+
+  function archiveProject(pid) {
+    fetch(`/api/projects/${pid}/archive`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+      .then(() => loadProjects())
+      .catch((e) => setError(String(e)))
+  }
+
+  const ngAgents = agents.filter((a) => (a.executor || 'builtin') === 'builtin')
 
   function saveLlm() {
     fetch('/api/agents/llm-config', {
@@ -88,20 +112,30 @@ function App() {
         <aside className="sidebar">
           <h3>算力配置</h3>
           <div className="llm">
-            <select value={llm.provider} onChange={(e) => setLlm({ ...llm, provider: e.target.value })}>
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="deepseek">DeepSeek</option>
-              <option value="openai_compatible">其他 OpenAI 兼容</option>
+            <select value={llm.provider}
+                    onChange={(e) => {
+                      const p = providers.find((x) => x.id === e.target.value)
+                      setLlm({ provider: e.target.value, api_key: '', model: p?.default_model || '', base_url: p?.base_url || '' })
+                    }}>
+              {['一线', '二线', '本地'].map((tier) => (
+                <optgroup key={tier} label={tier}>
+                  {providers.filter((p) => p.tier === tier).map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </optgroup>
+              ))}
             </select>
-            {llm.provider === 'openai_compatible' && (
-              <input placeholder="base_url（如 https://api.xxx.com/v1）" value={llm.base_url}
-                     onChange={(e) => setLlm({ ...llm, base_url: e.target.value })} />
+            {llm.provider === 'ollama' && (
+              <div className="p-sub">本地模型，无需 key，填模型名即可</div>
             )}
             <input type="password" placeholder="API key" value={llm.api_key}
                    onChange={(e) => setLlm({ ...llm, api_key: e.target.value })} />
-            <input placeholder="模型（可选）" value={llm.model}
+            <input placeholder="模型（已按提供商预填，可改）" value={llm.model}
                    onChange={(e) => setLlm({ ...llm, model: e.target.value })} />
+            {llm.base_url && (
+              <input placeholder="base_url" value={llm.base_url} title="兼容端点的 base_url"
+                     onChange={(e) => setLlm({ ...llm, base_url: e.target.value })} />
+            )}
             <button onClick={saveLlm}>保存算力配置</button>
             {llmCurrent && (
               <div className="p-sub">当前: {llmCurrent.provider} · {llmCurrent.model || '-'} · key {llmCurrent.api_key_set ? '✓' : '✗'}</div>
@@ -114,13 +148,15 @@ function App() {
               <li key={p.project_id} className={p.project_id === selected ? 'active' : ''}
                   onClick={() => loadDetail(p.project_id)}>
                 <div className="p-title">{p.title}</div>
-                <div className="p-sub">{p.status} · {p.goal?.slice(0, 24)}</div>
+                <div className="p-sub">{p.status} · {p.goal?.slice(0, 24)}
+                  <button className="mini" onClick={(e) => { e.stopPropagation(); archiveProject(p.project_id) }}>🗑</button>
+                </div>
               </li>
             ))}
           </ul>
-          <h3>Agent（{agents.length}）</h3>
+          <h3>Agent（{ngAgents.length}）</h3>
           <ul className="agents">
-            {agents.map((a) => (
+            {ngAgents.map((a) => (
               <li key={a.name}><b>{a.name}</b> <span className="cap">{a.capability}</span></li>
             ))}
           </ul>
@@ -136,6 +172,15 @@ function App() {
         </aside>
 
         <main className="content">
+          <section className="goal-box">
+            <h2>提需求</h2>
+            <input className="goal-title" placeholder="需求标题（可选）" value={goalTitle}
+                   onChange={(e) => setGoalTitle(e.target.value)} />
+            <textarea placeholder="描述你的目标，平台自动拆任务、派 agent 干活……"
+                      value={goal} onChange={(e) => setGoal(e.target.value)} rows={3} />
+            <button onClick={submitGoal} disabled={!goal.trim()}>提交 → 自动组队开工</button>
+          </section>
+
           {!selected && <div className="hint">← 选一个项目看任务看板</div>}
 
           {detail && (

@@ -81,7 +81,7 @@ def create_project(title: str, goal: str, auth: dict = Depends(require_auth)):
 
 @app.get("/projects")
 def list_projects(auth: dict = Depends(require_auth)):
-    """项目列表（从事件溯源推导：PROJECT_CREATED + PROJECT_PAUSED）。供看板。"""
+    """项目列表（事件溯源推导），已归档的排除。供看板。"""
     require_level("read_project", auth["level"])
     projects: dict[str, dict] = {}
     for e in log.replay():
@@ -92,10 +92,26 @@ def list_projects(auth: dict = Depends(require_auth)):
                 "goal": e["payload"].get("goal", ""),
                 "status": "active",
             }
-        elif e["event_type"] == events.EventType.PROJECT_PAUSED.value \
+        elif e["event_type"] in (events.EventType.PROJECT_PAUSED.value,
+                                 events.EventType.PROJECT_ARCHIVED.value) \
                 and e.get("project_id") in projects:
-            projects[e["project_id"]]["status"] = "paused"
-    return {"projects": list(projects.values())}
+            projects[e["project_id"]]["status"] = \
+                "paused" if e["event_type"] == events.EventType.PROJECT_PAUSED.value else "archived"
+    return {"projects": [p for p in projects.values() if p["status"] != "archived"]}
+
+
+@app.post("/projects/{pid}/archive")
+def archive_project(pid: str, auth: dict = Depends(require_auth)):
+    """归档项目（从看板列表移除；测试/废弃项目清理用）。"""
+    if int(auth["level"]) < int(perm.Level.L3_FLOW):
+        raise HTTPException(403, "权限不足: archive_project 需 L3_FLOW")
+    evs = log.replay(project_id=pid)
+    if not any(e["event_type"] == events.EventType.PROJECT_CREATED.value for e in evs):
+        raise HTTPException(404, "project not found")
+    log.append(events.new_event(events.EventType.PROJECT_ARCHIVED, "user",
+                                {}, project_id=pid,
+                                idempotency_key=f"archive:{pid}"))
+    return {"project_id": pid, "status": "archived"}
 
 
 @app.get("/projects/{pid}/tasks")
@@ -243,10 +259,54 @@ def list_agents(auth: dict = Depends(require_auth)):
 
 # ---------- LLM 算力配置（前端下拉选 provider + 输 API key） ----------
 class LLMConfigIn(BaseModel):
-    provider: str              # openai | anthropic | deepseek | openai_compatible
+    provider: str
     api_key: str = ""
     model: str = ""
-    base_url: str = ""         # openai_compatible 用
+    base_url: str = ""
+
+
+# 算力提供商目录（一线/二线/本地），前端下拉数据源 + 配置映射
+LLM_PROVIDERS: dict[str, dict] = {
+    # 一线
+    "openai":      {"name": "OpenAI",          "tier": "一线", "type": "openai",
+                    "default_model": "gpt-4o-mini", "base_url": ""},
+    "anthropic":   {"name": "Anthropic Claude", "tier": "一线", "type": "anthropic",
+                    "default_model": "claude-opus-4-8", "base_url": ""},
+    "google":      {"name": "Google Gemini",    "tier": "一线", "type": "openai_compatible",
+                    "default_model": "gemini-2.0-flash",
+                    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai"},
+    "deepseek":    {"name": "DeepSeek",         "tier": "一线", "type": "openai_compatible",
+                    "default_model": "deepseek-chat",
+                    "base_url": "https://api.deepseek.com/v1"},
+    "xai":         {"name": "xAI Grok",         "tier": "一线", "type": "openai_compatible",
+                    "default_model": "grok-2", "base_url": "https://api.x.ai/v1"},
+    # 二线
+    "qwen":        {"name": "阿里通义 Qwen",     "tier": "二线", "type": "openai_compatible",
+                    "default_model": "qwen-max",
+                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"},
+    "glm":         {"name": "智谱 GLM",          "tier": "二线", "type": "openai_compatible",
+                    "default_model": "glm-4-flash",
+                    "base_url": "https://open.bigmodel.cn/api/paas/v4"},
+    "kimi":        {"name": "Moonshot Kimi",    "tier": "二线", "type": "openai_compatible",
+                    "default_model": "moonshot-v1-8k",
+                    "base_url": "https://api.moonshot.cn/v1"},
+    "minimax":     {"name": "MiniMax",          "tier": "二线", "type": "openai_compatible",
+                    "default_model": "MiniMax-Text-01",
+                    "base_url": "https://api.minimax.chat/v1"},
+    "mistral":     {"name": "Mistral",          "tier": "二线", "type": "openai_compatible",
+                    "default_model": "mistral-small",
+                    "base_url": "https://api.mistral.ai/v1"},
+    "siliconflow": {"name": "硅基流动 SiliconFlow", "tier": "二线", "type": "openai_compatible",
+                    "default_model": "Qwen/Qwen2.5-7B-Instruct",
+                    "base_url": "https://api.siliconflow.cn/v1"},
+    "wenxin":      {"name": "百度文心",          "tier": "二线", "type": "openai_compatible",
+                    "default_model": "ernie-4.0-8k",
+                    "base_url": "https://qianfan.baidubce.com/v2"},
+    # 本地
+    "ollama":      {"name": "Ollama 本地",       "tier": "本地", "type": "openai_compatible",
+                    "default_model": "qwen2.5:7b",
+                    "base_url": "http://localhost:11434/v1"},
+}
 
 
 def _write_env_updates(updates: dict[str, str]):
@@ -271,32 +331,33 @@ def get_llm_config(auth: dict = Depends(require_auth)):
             "api_key_set": bool(c.cfg.api_key)}
 
 
+@app.get("/agents/providers")
+def list_providers(auth: dict = Depends(require_auth)):
+    """算力提供商目录（一线/二线/本地），前端下拉数据源。"""
+    require_level("read_project", auth["level"])
+    return {"providers": [
+        {"id": k, "name": v["name"], "tier": v["tier"],
+         "default_model": v["default_model"], "base_url": v["base_url"]}
+        for k, v in LLM_PROVIDERS.items()]}
+
+
 @app.post("/agents/llm-config")
 def set_llm_config(body: LLMConfigIn, auth: dict = Depends(require_auth)):
     """选择算力提供商 + 输入 API key → 写 gitignore 的 .env（下次 LLM 调用生效）。"""
     require_level("write_message", auth["level"])
     p = body.provider.strip().lower()
-    if p not in ("openai", "anthropic", "deepseek", "openai_compatible"):
+    prov = LLM_PROVIDERS.get(p)
+    if not prov:
         raise HTTPException(400, f"未知 provider: {p}")
-    updates = {}
-    if p == "openai":
-        updates = {"LLM_PROVIDER": "openai", "OPENAI_API_KEY": body.api_key.strip(),
-                   "LLM_MODEL": body.model.strip() or "gpt-4o-mini"}
-    elif p == "anthropic":
-        updates = {"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": body.api_key.strip(),
-                   "LLM_MODEL": body.model.strip() or "claude-opus-4-8"}
-    elif p == "deepseek":
-        updates = {"LLM_PROVIDER": "openai_compatible",
-                   "LLM_BASE_URL": "https://api.deepseek.com/v1",
-                   "LLM_API_KEY": body.api_key.strip(),
-                   "LLM_MODEL": body.model.strip() or "deepseek-chat"}
+    updates = {"LLM_PROVIDER": prov["type"]}
+    if prov["type"] == "openai":
+        updates["OPENAI_API_KEY"] = body.api_key.strip()
+    elif prov["type"] == "anthropic":
+        updates["ANTHROPIC_API_KEY"] = body.api_key.strip()
     else:  # openai_compatible
-        if not body.base_url:
-            raise HTTPException(400, "openai_compatible 需 base_url")
-        updates = {"LLM_PROVIDER": "openai_compatible",
-                   "LLM_BASE_URL": body.base_url.strip(),
-                   "LLM_API_KEY": body.api_key.strip(),
-                   "LLM_MODEL": body.model.strip()}
+        updates["LLM_BASE_URL"] = (body.base_url.strip() or prov["base_url"])
+        updates["LLM_API_KEY"] = body.api_key.strip()
+    updates["LLM_MODEL"] = body.model.strip() or prov["default_model"]
     _write_env_updates(updates)
     return {"provider": p, "status": "saved",
             "note": "下次 LLM 调用生效（docker 模式需重建容器加载 secrets）"}

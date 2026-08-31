@@ -26,6 +26,12 @@ button { background: var(--accent); border: 0; color: #fff; padding: 6px 14px; b
 .p-sub { font-size: 12px; color: var(--muted); }
 .llm { display: flex; flex-direction: column; gap: 6px; }
 .llm select, .llm input { background: var(--panel); border: 1px solid var(--line); color: var(--text); padding: 6px 8px; border-radius: 6px; width: 100%; }
+button.mini { background: none; border: 1px solid var(--line); color: var(--muted); padding: 0 6px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-left: 4px; }
+button.mini:hover { color: #ff8a8a; border-color: #6b2f36; }
+.goal-box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+.goal-box h2 { margin: 0 0 10px; font-size: 16px; }
+.goal-box input, .goal-box textarea { background: var(--bg); border: 1px solid var(--line); color: var(--text); padding: 8px 10px; border-radius: 6px; width: 100%; margin-bottom: 8px; font: inherit; }
+.goal-box textarea { resize: vertical; }
 .agents li { display: flex; justify-content: space-between; gap: 6px; cursor: default; }
 .cap { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
 .content { min-width: 0; }
