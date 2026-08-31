@@ -90,7 +90,7 @@ function App() {
     ...ngAgents.map((a) => ({ key: 'r-' + a.name, name: capName(a.name), desc: a.capability || a.role || '', reg: a })),
     ...templates.filter((t) => !regNames.has(t.name) && !regNames.has(t.name_cn))
       .map((t) => ({ key: 't-' + t.id, id: t.id, name: t.name, desc: t.desc })),
-  ]
+  ].sort((a, b) => (a.name === 'NG助理' ? -1 : b.name === 'NG助理' ? 1 : 0))
 
   function addAgent(item) {
     if (item.id) return addTemplate(item.id)          // 模板 → instantiate
