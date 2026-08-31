@@ -33,7 +33,7 @@ docker compose up -d --build
 
 echo "[e2e] 等待 api healthy"
 for i in $(seq 1 90); do
-  if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+  if curl -fsS http://localhost:8080/health >/dev/null 2>&1; then
     echo "[e2e] api healthy（第 ${i} 次探测）"; break
   fi
   sleep 2
@@ -42,24 +42,24 @@ for i in $(seq 1 90); do
   fi
 done
 
-echo "[e2e] 健康检查: $(curl -fsS http://localhost:8000/health)"
+echo "[e2e] 健康检查: $(curl -fsS http://localhost:8080/health)"
 
 H3="Authorization: Bearer $NG_LEVEL3_TOKEN"
 H1="Authorization: Bearer $NG_LEVEL1_TOKEN"
 
 echo "[e2e] 建项目"
 PID=$(curl -fsS -X POST -H "$H3" \
-  "http://localhost:8000/projects?title=e2e&goal=test" \
+  "http://localhost:8080/projects?title=e2e&goal=test" \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["project_id"])')
 echo "  project_id=$PID"
 
 echo "[e2e] 建任务 → in_progress → 审计回放"
 # 中文标题必须 percent-encode（query 参数），否则 HTTP 400
 TID=$(curl -fsS -G -X POST -H "$H1" --data-urlencode "title=E2E任务" \
-  "http://localhost:8000/projects/$PID/tasks" \
+  "http://localhost:8080/projects/$PID/tasks" \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["task_id"])')
-curl -fsS -X PATCH -H "$H1" "http://localhost:8000/tasks/$TID/state?to=in_progress" >/dev/null
-curl -fsS -H "$H1" "http://localhost:8000/projects/$PID/audit" \
+curl -fsS -X PATCH -H "$H1" "http://localhost:8080/tasks/$TID/state?to=in_progress" >/dev/null
+curl -fsS -H "$H1" "http://localhost:8080/projects/$PID/audit" \
   | python3 -c '
 import sys, json
 ev = json.load(sys.stdin)["events"]
@@ -71,10 +71,10 @@ echo "[e2e] P1 反例：同 key 不同 to → 第二次应 409"
 # 幂等键全库唯一（非 per-task），每次运行用唯一 key 避免上次残留冲突
 PK="e2e-pk-$(openssl rand -hex 4)"
 C1=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H "$H1" \
-  "http://localhost:8000/tasks/$TID/state?to=blocked&idempotency_key=$PK")
+  "http://localhost:8080/tasks/$TID/state?to=blocked&idempotency_key=$PK")
 [ "$C1" = "200" ] || { echo "  首次(key=$PK,to=blocked)应 200，实际 $C1 ❌"; exit 1; }
 C2=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H "$H1" \
-  "http://localhost:8000/tasks/$TID/state?to=in_progress&idempotency_key=$PK")
+  "http://localhost:8080/tasks/$TID/state?to=in_progress&idempotency_key=$PK")
 [ "$C2" = "409" ] && echo "  → 409 ✅" || { echo "  二次(key=$PK,to=in_progress 不同意图)应 409，实际 $C2 ❌"; exit 1; }
 
 echo "[e2e] P0 密钥契约：ng_app 用 NG_APP_PASSWORD 认证连接"
