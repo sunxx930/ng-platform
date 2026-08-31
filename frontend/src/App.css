@@ -115,6 +115,21 @@ button.mini:hover { color: var(--accent); border-color: var(--accent); }
 /* 主区 */
 .content { min-width: 0; }
 .content h2 { font-size: 15px; font-weight: 700; margin: 22px 0 12px; }
+
+/* 统计概览 */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+.stat-num { font-size: 24px; font-weight: 700; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.stat-label { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+/* 项目卡片网格 */
+.proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.proj-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; cursor: pointer; transition: transform .12s, border-color .15s; }
+.proj-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+.proj-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.proj-title { font-size: 15px; font-weight: 600; }
+.proj-goal { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+.proj-foot { font-size: 12px; color: var(--dim); }
 .welcome { text-align: center; padding: 70px 20px; border: 1px dashed var(--line-2); border-radius: var(--radius); }
 .welcome-icon { font-size: 52px; margin-bottom: 14px; }
 .welcome-title { font-size: 18px; font-weight: 600; margin-bottom: 6px; }

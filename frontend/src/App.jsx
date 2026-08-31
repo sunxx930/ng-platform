@@ -248,12 +248,36 @@ function App() {
 
         {/* 右：看板 */}
         <main className="content">
+          <div className="stats">
+            <div className="stat"><div className="stat-num">{projects.length}</div><div className="stat-label">项目</div></div>
+            <div className="stat"><div className="stat-num">{combined.length}</div><div className="stat-label">Agent</div></div>
+            <div className="stat"><div className="stat-num">{usage?.calls || 0}</div><div className="stat-label">算力调用</div></div>
+            <div className="stat"><div className="stat-num">{fmtTokens(usedTokens)}</div><div className="stat-label">Token 已用</div></div>
+          </div>
+
           {!selected ? (
-            <div className="welcome">
-              <div className="welcome-icon">🐳</div>
-              <div className="welcome-title">从左边选一个项目，或上面提个新需求</div>
-              <div className="welcome-sub">每个项目会展开：任务看板、审批队列、完整审计流</div>
-            </div>
+            projects.length === 0 ? (
+              <div className="welcome">
+                <div className="welcome-icon">🐳</div>
+                <div className="welcome-title">从左边选一个项目，或上面提个新需求</div>
+                <div className="welcome-sub">每个项目会展开：任务看板、审批队列、完整审计流</div>
+              </div>
+            ) : (
+              <div className="proj-grid">
+                {projects.map((p) => (
+                  <div key={p.project_id} className="proj-card" onClick={() => loadDetail(p.project_id)}>
+                    <div className="proj-head">
+                      <div className="proj-title">{p.title}</div>
+                      <span className={`pill ${p.status}`}>{p.status === 'active' ? '运行中' : p.status}</span>
+                    </div>
+                    <div className="proj-goal">{p.goal || '无目标描述'}</div>
+                    <div className="proj-foot">
+                      <span>👀 点击查看任务看板 →</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
           ) : !detail ? (
             <div className="loading">加载中…</div>
           ) : (
