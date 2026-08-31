@@ -13,6 +13,23 @@ CREATE TABLE projects (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- 多用户（2026-09-01）：注册用户账号，事件加 user 维度，项目按用户隔离
+CREATE TABLE users (
+  id            UUID PRIMARY KEY,
+  username      TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,          -- scrypt 格式 salt$hash，stdlib 无新依赖
+  level         INT  NOT NULL DEFAULT 1,  -- 1=L1 普通用户
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE auth_tokens (
+  token_hash  TEXT PRIMARY KEY,          -- sha256(明文 token)
+  user_id     UUID NOT NULL REFERENCES users(id),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked     BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX idx_auth_tokens_user ON auth_tokens(user_id);
+
 CREATE TABLE agents (
   id           UUID PRIMARY KEY,
   name         TEXT NOT NULL,
@@ -93,12 +110,14 @@ CREATE TABLE events (
   task_id        UUID,
   event_type     TEXT NOT NULL,
   actor          TEXT,
+  user_id        UUID REFERENCES users(id),       -- 多用户：事件 user 维度（2026-09-01）
   payload        JSONB NOT NULL DEFAULT '{}',
   idempotency_key TEXT UNIQUE,                    -- 幂等（15.3）
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_events_project ON events(project_id, created_at);
 CREATE INDEX idx_events_task    ON events(task_id);
+CREATE INDEX idx_events_user    ON events(user_id);
 
 -- 交接摘要
 CREATE TABLE handovers (

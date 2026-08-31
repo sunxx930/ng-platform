@@ -29,7 +29,8 @@ def _content(e: dict) -> tuple:
             pass
     return (str(e.get("event_type")), str(e.get("actor")),
             json.dumps(payload, sort_keys=True, ensure_ascii=False),
-            str(e.get("project_id")), str(e.get("task_id")))
+            str(e.get("project_id")), str(e.get("task_id")),
+            str(e.get("user_id")))
 
 
 class EventLog:
@@ -75,8 +76,8 @@ class EventLog:
             # DB 幂等：ON CONFLICT 原子去重（F4 修复，消除 SELECT-then-INSERT 竞态）
             r = conn.execute(text(
                 """INSERT INTO events
-                   (event_type, actor, payload, project_id, task_id, idempotency_key)
-                   VALUES (:event_type, :actor, :payload, :project_id, :task_id, :idempotency_key)
+                   (event_type, actor, payload, project_id, task_id, user_id, idempotency_key)
+                   VALUES (:event_type, :actor, :payload, :project_id, :task_id, :user_id, :idempotency_key)
                    ON CONFLICT (idempotency_key) DO NOTHING
                    RETURNING id
                 """), {
@@ -85,12 +86,13 @@ class EventLog:
                 "payload": json.dumps(event["payload"], ensure_ascii=False),
                 "project_id": event.get("project_id"),
                 "task_id": event.get("task_id"),
+                "user_id": event.get("user_id"),
                 "idempotency_key": ik,
             }).mappings().first()
             # 无返回 = key 冲突：内容一致=幂等；内容不同=抛冲突（P1 反例修复）
             if r is None and ik is not None:
                 existing = conn.execute(text(
-                    "SELECT event_type, actor, payload, project_id, task_id "
+                    "SELECT event_type, actor, payload, project_id, task_id, user_id "
                     "FROM events WHERE idempotency_key=:ik"), {"ik": ik}).mappings().first()
                 if existing is not None:
                     stored = {
@@ -99,6 +101,7 @@ class EventLog:
                         "payload": existing["payload"],
                         "project_id": existing["project_id"],
                         "task_id": existing["task_id"],
+                        "user_id": existing["user_id"],
                     }
                     if _content(stored) != _content(event):
                         raise IdempotencyConflict(
@@ -142,6 +145,8 @@ class EventLog:
                 d["project_id"] = str(d["project_id"])
             if d.get("task_id") is not None:
                 d["task_id"] = str(d["task_id"])
+            if d.get("user_id") is not None:
+                d["user_id"] = str(d["user_id"])
             if d.get("created_at"):
                 d["created_at_ts"] = d["created_at"].timestamp()
             out.append(d)

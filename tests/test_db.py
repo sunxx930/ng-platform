@@ -26,6 +26,27 @@ def db_log():
     return EventLog(engine=app_eng), EventLog(engine=eng)
 
 
+def test_db_users_permissions(db_log):
+    """P0 回归（2026-09-01 体检发现）：ng_app 角色对 users/auth_tokens 有读写权限，
+    否则 DB 模式注册/登录全 500。整条注册→解析→吊销走 ng_app（真实应用角色）。"""
+    from app.storage.user_store import UserStore, UsernameConflict
+    _, _admin = db_log
+    app_log, _ = db_log
+    import uuid as _uuid
+    store = UserStore(engine=app_log._engine)   # ng_app 连接
+    uname = "permtest" + _uuid.uuid4().hex[:6]
+    u = store.create_user(uname, "secret123")
+    tok = store.issue_token(u["id"])
+    sess = store.resolve_token(tok)
+    assert sess["username"] == uname and sess["user_id"] == u["id"]
+    store.revoke_token(tok)
+    assert store.resolve_token(tok) is None
+    # 清理（超管）
+    with _admin._engine.begin() as c:
+        c.execute(text("DELETE FROM auth_tokens WHERE user_id=:uid"), {"uid": u["id"]})
+        c.execute(text("DELETE FROM users WHERE id=:uid"), {"uid": u["id"]})
+
+
 def test_db_event_append_and_idempotency(db_log):
     app_log, _ = db_log
     from app.domain import events

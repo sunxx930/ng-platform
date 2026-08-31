@@ -1,6 +1,8 @@
 """真实身份鉴权（Fix 4 生产缺口）—— Bearer token → 身份/权限级别。
 
-骨架用 token→(user,level) 注册表（环境变量可覆盖）；生产接真实 IdP/JWT。
+多用户（2026-09-01）：
+- 注册用户会话 token → UserStore 解析（main.py 注入），返回 user_id/username/level
+- 静态 token→(user,level) 注册表保留，作服务器端管理员/agent 通道（NG_LEVEL3/NG_LEVEL1）
 
 P0 密钥契约（2026-08-31）：生产/严格模式拒绝不安全默认 token，杜绝漏配静默上线。
 """
@@ -37,11 +39,31 @@ def resolve_tokens(env: dict) -> dict[str, tuple[str, int]]:
 
 TOKENS = resolve_tokens(dict(os.environ))
 
+# 多用户（2026-09-01）：注册用户会话 token 走 UserStore（main.py 启动时注入）。
+# 静态 token 契约不变——先查会话 token，未命中再查静态注册表（服务器端管理员/agent 通道）。
+user_store = None
+
+
+def set_user_store(store) -> None:
+    global user_store
+    user_store = store
+
 
 def require_auth(authorization: str = Header(default="")):
-    """FastAPI 依赖：校验 Bearer token，返回 {user, level}；失败 401。"""
+    """FastAPI 依赖：校验 Bearer token，返回 {user, level, user_id}；失败 401。
+
+    - 注册用户会话 token → UserStore 解析出 {user_id, username, level}
+    - 静态 token（NG_LEVEL3/NG_LEVEL1）→ 服务器端通道，user_id=None
+    """
     token = authorization.removeprefix("Bearer ").strip()
-    if not token or token not in TOKENS:
+    if not token:
         raise HTTPException(401, "未认证或 token 无效")
-    user, level = TOKENS[token]
-    return {"user": user, "level": level}
+    if user_store is not None:
+        sess = user_store.resolve_token(token)
+        if sess is not None:
+            return {"user": sess["username"], "level": sess["level"],
+                    "user_id": sess["user_id"]}
+    if token in TOKENS:
+        user, level = TOKENS[token]
+        return {"user": user, "level": level, "user_id": None}
+    raise HTTPException(401, "未认证或 token 无效")

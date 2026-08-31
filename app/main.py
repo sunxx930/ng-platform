@@ -21,7 +21,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request, Depends
+from fastapi import FastAPI, HTTPException, Query, Request, Depends, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -30,11 +30,13 @@ from app.domain.task import (TaskStatus, ReviewVerdict, InvalidTransition,
                              transition)
 from app.security import permission as perm
 from app.security.approval_gate import ApprovalGate, PendingApproval
+from app.security import auth as authmod
 from app.security.auth import require_auth
 from app.services.llm import LLMClient, LLMConfigError
 from app.services.requirement_parser import RequirementParser
 from app.services.team_matcher import match_team
 from app.storage.event_log import EventLog, IdempotencyConflict
+from app.storage.user_store import UserStore, UsernameConflict, InvalidCredentials
 
 app = FastAPI(title="NG AI Platform", version="0.1.0")
 
@@ -47,11 +49,68 @@ def health():
 @app.get("/auth/me")
 def auth_me(auth: dict = Depends(require_auth)):
     """当前身份与权限级别（前端权限感知：隐藏/禁用 L3 动作）。"""
-    return {"user": auth["user"], "level": auth["level"]}
+    return {"user": auth["user"], "level": auth["level"],
+            "user_id": auth.get("user_id"), "username": auth["user"]}
+
+
+# ---------- 多用户注册 / 登录（2026-09-01，用户客户端入口） ----------
+class RegisterIn(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/auth/register")
+def auth_register(body: RegisterIn):
+    """注册用户：用户名唯一 + 密码≥6 → 建用户（L1）+ 发会话 token。
+
+    多用户：注册用户是普通用户（level 1），数据按 user_id 隔离。
+    管理员在服务器端走静态 NG_LEVEL3_TOKEN，不经此端。
+    """
+    username = body.username.strip()
+    if not username:
+        raise HTTPException(400, "用户名不能为空")
+    if len(body.password) < 6:
+        raise HTTPException(400, "密码至少 6 位")
+    try:
+        user = user_store.create_user(username, body.password, level=1)
+    except UsernameConflict:
+        raise HTTPException(409, f"用户名已存在: {username}")
+    token = user_store.issue_token(user["id"])
+    log.append(events.new_event(
+        events.EventType.USER_REGISTERED, f"user:{username}",
+        {"user_id": user["id"], "username": username}, user_id=user["id"]))
+    return {"token": token, "user_id": user["id"],
+            "username": username, "level": user["level"]}
+
+
+@app.post("/auth/login")
+def auth_login(body: RegisterIn):
+    """登录：校验用户名/密码 → 发新会话 token。失败 401。"""
+    username = body.username.strip()
+    user = user_store.get_user_by_username(username)
+    if user is None or not user_store.verify_password(body.password,
+                                                      user["password_hash"]):
+        raise HTTPException(401, "用户名或密码错误")
+    token = user_store.issue_token(user["id"])
+    log.append(events.new_event(
+        events.EventType.USER_LOGGED_IN, f"user:{username}",
+        {"user_id": user["id"], "username": username}, user_id=user["id"]))
+    return {"token": token, "user_id": user["id"],
+            "username": username, "level": user["level"]}
+
+
+@app.post("/auth/logout")
+def auth_logout(authorization: str = Header(default="")):
+    """登出：吊销当前会话 token（静态 token 登出无操作，返回 ok）。"""
+    token = authorization.removeprefix("Bearer ").strip()
+    if token and user_store is not None:
+        user_store.revoke_token(token)
+    return {"status": "ok"}
 
 # 事件正源：设置 DATABASE_URL 时用 PostgreSQL（含 append-only/幂等约束），否则 JSONL
 import os
 log = EventLog()
+user_store = UserStore()
 _dburl = os.environ.get("DATABASE_URL")
 if _dburl:
     # DB 正源：失败必须显式报错，绝不静默回退 JSONL（阻塞 1）
@@ -60,7 +119,11 @@ if _dburl:
     with engine.connect() as _c:      # 启动即校验连接
         _c.execute(__import__('sqlalchemy').text("SELECT 1"))
     log = EventLog(engine=engine)
+    user_store = UserStore(engine=engine)
+    authmod.set_user_store(user_store)   # 多用户：注册用户会话 token 走 DB
     print(f"[main] 事件正源=PostgreSQL ({_dburl.split('@')[-1]})", flush=True)
+else:
+    authmod.set_user_store(user_store)   # dev JSONL 兜底同样注入
 
 # 通用审批门（L3/L4 动作）：ensure_approved 已批准放行，否则建请求 + 抛 PendingApproval
 # 传 callable 动态读当前 log（log 会在 DB 模式替换 / 测试 monkeypatch）
@@ -82,17 +145,26 @@ def create_project(title: str, goal: str, auth: dict = Depends(require_auth)):
     pid = str(uuid.uuid4())
     log.append(events.new_event(
         events.EventType.PROJECT_CREATED, "user",
-        {"title": title, "goal": goal}, project_id=pid))
+        {"title": title, "goal": goal}, project_id=pid,
+        user_id=auth.get("user_id")))
     return {"project_id": pid, "status": "active"}
 
 
 @app.get("/projects")
 def list_projects(auth: dict = Depends(require_auth)):
-    """项目列表（事件溯源推导），已归档的排除。供看板。"""
+    """项目列表（事件溯源推导），已归档的排除。供看板。
+
+    多用户隔离：注册用户（有 user_id）只见自己的项目；
+    服务器端静态 token（user_id=None，管理员/agent 通道）见全部。
+    """
     require_level("read_project", auth["level"])
+    viewer = auth.get("user_id")
     projects: dict[str, dict] = {}
     for e in log.replay():
         if e["event_type"] == events.EventType.PROJECT_CREATED.value:
+            # 多用户隔离：只有注册用户拥有者能看自己的项目
+            if viewer is not None and e.get("user_id") != viewer:
+                continue
             projects[e["project_id"]] = {
                 "project_id": e["project_id"],
                 "title": e["payload"].get("title", ""),
@@ -230,7 +302,8 @@ def post_message(pid: str, body: str, parse: bool = False,
     mid = str(uuid.uuid4())
     log.append(events.new_event(
         events.EventType.MESSAGE_AGGREGATED, "user",
-        {"message_id": mid, "body": body}, project_id=pid))
+        {"message_id": mid, "body": body}, project_id=pid,
+        user_id=auth.get("user_id")))
     created = []
     if parse:
         try:

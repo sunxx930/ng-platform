@@ -56,9 +56,75 @@ function errMsg(e) {
   return String(e?.message || e || '未知错误')
 }
 
+function AuthScreen({ onAuth }) {
+  const [mode, setMode] = useState('login')   // login | register
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  function submit(e) {
+    e.preventDefault()
+    setBusy(true); setErr('')
+    fetch(`/api/auth/${mode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    })
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}))
+        if (!r.ok) throw { status: r.status, detail: d.detail || '请求失败' }
+        return d
+      })
+      .then((d) => onAuth({ token: d.token, user_id: d.user_id, username: d.username, level: d.level }))
+      .catch((e) => setErr(String(e.detail || e?.message || '网络错误')))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <div className="auth-screen">
+      <div className="auth-card">
+        <div className="brand auth-brand">
+          <div className="logo">🐳</div>
+          <div className="brand-text">
+            <div className="brand-name"><span className="accent">NG</span> AI Platform</div>
+            <div className="tagline">给一个目标，得到你想要的</div>
+          </div>
+        </div>
+        <h2 className="auth-title">{mode === 'register' ? '注册新账号' : '登录'}</h2>
+        <p className="muted auth-sub">
+          {mode === 'register' ? '注册后即可进入平台，创建属于你的项目' : '用已注册的账号登录，进入你的项目'}
+        </p>
+        <form onSubmit={submit} className="auth-form">
+          <input data-testid="auth-username" placeholder="用户名" autoComplete="username"
+                 value={username} onChange={(e) => setUsername(e.target.value)} />
+          <input data-testid="auth-password" type="password" placeholder="密码（至少 6 位）" autoComplete="current-password"
+                 value={password} onChange={(e) => setPassword(e.target.value)} />
+          {err && <div className="error auth-err" data-testid="auth-error"><span>{err}</span></div>}
+          <button className="primary big" data-testid="auth-submit" type="submit"
+                  disabled={busy || !username.trim() || password.length < 6}>
+            {busy ? '请稍候…' : mode === 'register' ? '注册并进入' : '登录进入'}
+          </button>
+        </form>
+        <div className="auth-switch">
+          {mode === 'login' ? (
+            <span>还没有账号？<button className="link" data-testid="auth-to-register"
+                                     onClick={() => { setMode('register'); setErr('') }}>去注册</button></span>
+          ) : (
+            <span>已有账号？<button className="link" data-testid="auth-to-login"
+                                   onClick={() => { setMode('login'); setErr('') }}>去登录</button></span>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function App() {
-  const [token, setToken] = useState('l1-agent-token')
-  const [tokenDraft, setTokenDraft] = useState('l1-agent-token')
+  const [session, setSession] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('ng_session')) } catch { return null }
+  })
+  const token = session?.token || ''
   const [projects, setProjects] = useState([])
   const [selected, setSelected] = useState(null)
   const [detail, setDetail] = useState(null)
@@ -76,15 +142,22 @@ function App() {
   const [fb, setFb] = useState({ content: '', contact: '', rating: null })
   const [toast, setToast] = useState('')
   const [confirmDel, setConfirmDel] = useState(null)
-  const [me, setMe] = useState(null)
-  const canL3 = (me?.level || 0) >= 3
+  const canL3 = (session?.level || 0) >= 3
+  const authed = !!session?.token
 
-  useEffect(() => { api('/auth/me', token).then(setMe).catch(() => setMe(null)) }, [token])
+  // 会话校验：token 无效/过期 → 清会话回登录页
+  useEffect(() => {
+    if (!authed) return
+    api('/auth/me', token).catch(() => { localStorage.removeItem('ng_session'); setSession(null) })
+  }, [authed, token])
 
   function loadProjects() {
     api('/projects', token).then((d) => { setProjects(d.projects || []); setError('') }).catch((e) => setError(errMsg(e)))
   }
-  useEffect(loadProjects, [token])
+  useEffect(() => {
+    if (!authed) return
+    api('/projects', token).then((d) => { setProjects(d.projects || []); setError('') }).catch((e) => setError(errMsg(e)))
+  }, [authed, token])
 
   function loadDetail(pid) {
     setSelected(pid)
@@ -94,11 +167,11 @@ function App() {
       .catch((e) => setError(errMsg(e)))
   }
 
-  useEffect(() => { api('/agents', token).then((d) => setAgents(d.agents || [])).catch(() => {}) }, [token])
-  useEffect(() => { api('/agents/templates', token).then((d) => setTemplates(d.templates || [])).catch(() => {}) }, [token])
-  useEffect(() => { api('/agents/llm-config', token).then(setLlmCurrent).catch(() => {}) }, [token])
-  useEffect(() => { api('/agents/providers', token).then((d) => setProviders(d.providers || [])).catch(() => {}) }, [token])
-  useEffect(() => { api('/usage', token).then(setUsage).catch(() => {}) }, [token])
+  useEffect(() => { if (authed) api('/agents', token).then((d) => setAgents(d.agents || [])).catch(() => {}) }, [authed, token])
+  useEffect(() => { if (authed) api('/agents/templates', token).then((d) => setTemplates(d.templates || [])).catch(() => {}) }, [authed, token])
+  useEffect(() => { if (authed) api('/agents/llm-config', token).then(setLlmCurrent).catch(() => {}) }, [authed, token])
+  useEffect(() => { if (authed) api('/agents/providers', token).then((d) => setProviders(d.providers || [])).catch(() => {}) }, [authed, token])
+  useEffect(() => { if (authed) api('/usage', token).then(setUsage).catch(() => {}) }, [authed, token])
 
   const fmtTokens = (n) => n >= 1000000 ? `${(n / 1000000).toFixed(2)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
   const usedTokens = usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : 0
@@ -133,6 +206,18 @@ function App() {
   ].sort((a, b) => (a.name === 'NG助理' ? -1 : b.name === 'NG助理' ? 1 : 0))
 
   function showToast(msg) { setToast(msg); setTimeout(() => setToast(''), 2200) }
+
+  function handleAuth(s) {
+    localStorage.setItem('ng_session', JSON.stringify(s))
+    setSession(s)
+    setError('')
+  }
+
+  function logout() {
+    api('/auth/logout', token, { method: 'POST' }).catch(() => {})
+    localStorage.removeItem('ng_session')
+    setSession(null)
+  }
 
   function deactivateAgent(name) {
     api(`/agents/${encodeURIComponent(name)}/deactivate`, token, { method: 'POST' })
@@ -187,6 +272,8 @@ function App() {
       .catch((e) => setError(errMsg(e)))
   }
 
+  if (!authed) return <AuthScreen onAuth={handleAuth} />
+
   return (
     <div className="app">
       <header className="topbar">
@@ -198,13 +285,11 @@ function App() {
           </div>
         </div>
         <div className="toolbar">
-          <input className="token" value={tokenDraft} placeholder="Bearer token" title="API 访问 token"
-                 onChange={(e) => setTokenDraft(e.target.value)}
-                 onKeyDown={(e) => e.key === 'Enter' && setToken(tokenDraft)} />
-          <button onClick={() => setToken(tokenDraft)}>应用 token</button>
-          <span className={`level-badge l${me?.level || '?'}`}>{me ? `L${me.level}` : '未认证'}</span>
+          <span className="who">👤 {session.username}</span>
+          <span className={`level-badge l${session.level}`}>L{session.level}</span>
           <button onClick={loadProjects}>刷新</button>
           <button className="primary" onClick={() => setShowFb(true)}>反馈</button>
+          <button data-testid="logout" onClick={logout}>退出</button>
         </div>
       </header>
 
