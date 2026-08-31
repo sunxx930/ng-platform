@@ -79,6 +79,53 @@ def create_project(title: str, goal: str, auth: dict = Depends(require_auth)):
     return {"project_id": pid, "status": "active"}
 
 
+@app.get("/projects")
+def list_projects(auth: dict = Depends(require_auth)):
+    """项目列表（从事件溯源推导：PROJECT_CREATED + PROJECT_PAUSED）。供看板。"""
+    require_level("read_project", auth["level"])
+    projects: dict[str, dict] = {}
+    for e in log.replay():
+        if e["event_type"] == events.EventType.PROJECT_CREATED.value:
+            projects[e["project_id"]] = {
+                "project_id": e["project_id"],
+                "title": e["payload"].get("title", ""),
+                "goal": e["payload"].get("goal", ""),
+                "status": "active",
+            }
+        elif e["event_type"] == events.EventType.PROJECT_PAUSED.value \
+                and e.get("project_id") in projects:
+            projects[e["project_id"]]["status"] = "paused"
+    return {"projects": list(projects.values())}
+
+
+@app.get("/projects/{pid}/tasks")
+def list_tasks(pid: str, auth: dict = Depends(require_auth)):
+    """项目任务看板数据（从事件推导：title/status/owner/reviewer/has_deliverable）。"""
+    require_level("read_project", auth["level"])
+    evs = log.replay(project_id=pid)
+    if not evs:
+        raise HTTPException(404, "project not found")
+    tasks: dict[str, dict] = {}
+    for e in evs:
+        tid = e.get("task_id")
+        if not tid:
+            continue
+        t = tasks.setdefault(tid, {"task_id": tid, "title": "",
+                                   "status": TaskStatus.TODO.value,
+                                   "owner": None, "reviewer": None,
+                                   "has_deliverable": False})
+        p = e["payload"]
+        if e["event_type"] == events.EventType.TASK_CREATED.value:
+            t["title"] = p.get("title", "")
+        elif e["event_type"] == events.EventType.AGENT_ASSIGNED.value:
+            t[p.get("role", "owner")] = p.get("agent")
+        elif e["event_type"] == events.EventType.TASK_STATE_CHANGED.value:
+            t["status"] = p["to"]
+        elif e["event_type"] == events.EventType.DELIVERABLE_SUBMITTED.value:
+            t["has_deliverable"] = True
+    return {"tasks": list(tasks.values())}
+
+
 @app.get("/projects/{pid}/context")
 def project_context(pid: str, auth: dict = Depends(require_auth)):
     evs = log.replay(project_id=pid)
@@ -192,6 +239,42 @@ def list_agents(auth: dict = Depends(require_auth)):
     """当前 agent 注册表（事件溯源重建）。"""
     require_level("read_project", auth["level"])
     return {"agents": _agents_registry()}
+
+
+# ---------- preagent 模板库 ----------
+def _load_templates() -> list[dict]:
+    import json as _json
+    from pathlib import Path
+    p = Path(__file__).parent / "agents" / "templates.json"
+    try:
+        return _json.loads(p.read_text(encoding="utf-8")).get("templates", [])
+    except Exception:
+        return []
+
+
+@app.get("/agents/templates")
+def list_templates(auth: dict = Depends(require_auth)):
+    """preagent 模板库：预置专业 agent，一键实例化。"""
+    require_level("read_project", auth["level"])
+    return {"templates": _load_templates()}
+
+
+@app.post("/agents/templates/{tid}/instantiate")
+def instantiate_template(tid: str, auth: dict = Depends(require_auth)):
+    """一键注册 preagent 模板为平台 agent（executor=builtin，跑平台算力）。"""
+    require_level("write_message", auth["level"])
+    t = next((x for x in _load_templates() if x["id"] == tid), None)
+    if t is None:
+        raise HTTPException(404, f"模板 {tid} 不存在")
+    log.append(events.new_event(
+        events.EventType.AGENT_REGISTERED, f"user:{auth['user']}",
+        {"name": t["name"], "capability": t["capability"], "role": t["role"],
+         "status": "available", "permission": "L1",
+         "executor": t.get("executor", "builtin"),
+         "template_id": tid},
+        idempotency_key=f"agentreg:{t['name']}:" + hashlib.sha256(
+            f"{t['capability']}|{t['role']}|builtin".encode()).hexdigest()[:10]))
+    return {"name": t["name"], "status": "available", "template_id": tid}
 
 
 # ---------- 任务 ----------

@@ -274,6 +274,31 @@ def test_idempotency_same_content_event_layer(client, tmp_path):
     assert n == 1
 
 
+def test_list_projects(client):
+    """看板数据：GET /projects 从事件溯源推导项目列表。"""
+    pid = _project(client)
+    r = client.get("/projects", headers=H1)
+    assert r.status_code == 200
+    projects = r.json()["projects"]
+    assert any(p["project_id"] == pid for p in projects)
+    assert any(p["status"] == "active" for p in projects)
+
+
+def test_list_tasks(client):
+    """看板数据：GET /projects/{id}/tasks 推导任务状态/owner/has_deliverable。"""
+    pid = _project(client)
+    tid = client.post(f"/projects/{pid}/tasks", headers=H1,
+                      params={"title": "看板任务", "owner_agent": "ng-assistant"}).json()["task_id"]
+    client.patch(f"/tasks/{tid}/state", headers=H1, params={"to": "in_progress"})
+    client.post(f"/tasks/{tid}/deliverables", headers=H1, params={"file_ref": "d.md"})
+    tasks = client.get(f"/projects/{pid}/tasks", headers=H1).json()["tasks"]
+    t = next(x for x in tasks if x["task_id"] == tid)
+    assert t["title"] == "看板任务"
+    assert t["owner"] == "ng-assistant"
+    assert t["status"] == "in_review"      # deliverable done → in_review
+    assert t["has_deliverable"] is True
+
+
 def test_deliverable_auto_advance_to_review(client):
     """闭环：Agent 提交产出(verdict=done) → 自动推进 in_progress→in_review（交接复核）。"""
     pid = _project(client)
@@ -541,6 +566,25 @@ def test_auto_agent_worker_executes_builtin_task(client, tmp_path, monkeypatch):
     tos = [e["payload"]["to"] for e in log.replay(task_id=tid)
            if e["event_type"] == "task.state_changed"]
     assert tos[-1] == "in_review"
+
+
+def test_list_templates(client):
+    """preagent 模板库：返回预置专业 agent（含用户指定的税务/Excel/PPT/数据库）。"""
+    templates = client.get("/agents/templates", headers=H1).json()["templates"]
+    ids = {t["id"] for t in templates}
+    for expected in ("tax-advisor", "excel-expert", "ppt-author", "database-expert"):
+        assert expected in ids
+
+
+def test_instantiate_template(client):
+    """一键注册 preagent 模板 → 平台 agent（可匹配派活）。"""
+    r = client.post("/agents/templates/excel-expert/instantiate", headers=H1)
+    assert r.status_code == 200
+    assert r.json()["name"] == "Excel专家"
+    agents = client.get("/agents", headers=H1).json()["agents"]
+    excel = next((a for a in agents if a["name"] == "Excel专家"), None)
+    assert excel is not None
+    assert excel["executor"] == "builtin"
 
 
 def test_auto_agent_is_builtin_latest_wins(client, tmp_path, monkeypatch):
