@@ -37,7 +37,15 @@ function api(path, token, opts) {
   return fetch('/api' + path, {
     ...opts,
     headers: { Authorization: `Bearer ${token}`, ...(opts?.headers || {}) },
-  }).then((r) => { if (!r.ok) throw new Error(`${r.status}`); return r.json() })
+  }).then((r) => { if (!r.ok) throw { status: r.status }; return r.json() })
+}
+
+function errMsg(e) {
+  if (e?.status === 401) return '🔒 未认证：token 无效或已过期'
+  if (e?.status === 403) return '🚫 权限不足：当前 token 级别不够，需要 L3'
+  if (e?.status === 409) return '⚠️ 冲突：需审批或幂等键冲突'
+  if (e?.status === 404) return '❓ 未找到'
+  return String(e?.message || e || '未知错误')
 }
 
 function App() {
@@ -58,8 +66,12 @@ function App() {
   const [showFb, setShowFb] = useState(false)
   const [fb, setFb] = useState({ content: '', contact: '', rating: null })
   const [toast, setToast] = useState('')
+  const [me, setMe] = useState(null)
+  const canL3 = (me?.level || 0) >= 3
 
-  function loadProjects() { api('/projects', token).then((d) => setProjects(d.projects || [])).catch((e) => setError(String(e))) }
+  useEffect(() => { api('/auth/me', token).then(setMe).catch(() => setMe(null)) }, [token])
+
+  function loadProjects() { api('/projects', token).then((d) => setProjects(d.projects || [])).catch((e) => setError(errMsg(e))) }
   useEffect(loadProjects, [token])
 
   function loadDetail(pid) {
@@ -67,7 +79,7 @@ function App() {
     setDetail(null)
     Promise.all([api(`/projects/${pid}/tasks`, token), api(`/projects/${pid}/audit`, token)])
       .then(([t, a]) => setDetail({ tasks: t.tasks || [], audit: a.events || [] }))
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(errMsg(e)))
   }
 
   useEffect(() => { api('/agents', token).then((d) => setAgents(d.agents || [])).catch(() => {}) }, [token])
@@ -91,12 +103,12 @@ function App() {
         return api(`/projects/${d.project_id}/messages?${g}`, token, { method: 'POST' })
       })
       .then(() => { loadProjects(); setGoal(''); setGoalTitle(''); setGoalLoading(false) })
-      .catch((e) => { setError(String(e)); setGoalLoading(false) })
+      .catch((e) => { setError(errMsg(e)); setGoalLoading(false) })
   }
 
   function archiveProject(pid) {
     if (!window.confirm('确定终止并删除这个项目？（审计事件保留，项目从看板移除）')) return
-    api(`/projects/${pid}/archive`, token, { method: 'POST' }).then(() => loadProjects()).catch((e) => setError(String(e)))
+    api(`/projects/${pid}/archive`, token, { method: 'POST' }).then(() => loadProjects()).catch((e) => setError(errMsg(e)))
   }
 
   const ngAgents = agents.filter((a) => (a.executor || 'builtin') === 'builtin' && a.status !== 'disabled' && a.name !== 'ng-assistant')
@@ -114,7 +126,7 @@ function App() {
   function deactivateAgent(name) {
     api(`/agents/${encodeURIComponent(name)}/deactivate`, token, { method: 'POST' })
       .then(() => { api('/agents', token).then((d) => setAgents(d.agents || [])); showToast(`已移除 ${name}，可在模板里重新添加`) })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(errMsg(e)))
   }
 
   function addAgent(item) {
@@ -122,23 +134,40 @@ function App() {
     if (item.id) {
       return fetch(`/api/agents/templates/${item.id}/instantiate`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
         .then(() => { done(); showToast(`已添加 ${item.name}——提需求时提到它的领域，就会自动派活`) })
-        .catch((e) => setError(String(e)))
+        .catch((e) => setError(errMsg(e)))
     }
     const q = new URLSearchParams({ name: item.reg.name, capability: item.reg.capability || '', role: item.reg.role || '', executor: 'builtin' })
     return fetch(`/api/agents/register?${q}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
       .then(() => { done(); showToast(`${item.name} 已在平台`) })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(errMsg(e)))
   }
 
   function saveLlm() {
     fetch('/api/agents/llm-config', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(llm) })
       .then((r) => r.json())
       .then(() => { setLlmCurrent({ provider: llm.provider, model: llm.model, api_key_set: !!llm.api_key }); setLlm({ ...llm, api_key: '' }) })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(errMsg(e)))
   }
 
   const approvals = (detail?.audit || []).filter((e) => ['approval.requested', 'approval.decided'].includes(e.event_type))
+  const decidedAids = new Set(approvals.filter((e) => e.event_type === 'approval.decided').map((e) => e.payload?.approval_id))
+  const pendingApprovals = approvals.filter((e) => e.event_type === 'approval.requested' && !decidedAids.has(e.payload?.approval_id))
   const audit = (detail?.audit || []).slice(-20).reverse()
+
+  function decideApproval(aid, result) {
+    api(`/approvals/${aid}/decision?result=${result}`, token, { method: 'POST' })
+      .then(() => { if (selected) loadDetail(selected); showToast(result === 'approve' ? '✅ 已批准' : '已拒绝') })
+      .catch((e) => setError(errMsg(e)))
+  }
+
+  function submitDeliverable(tid) {
+    const fileRef = window.prompt('产出文件路径（如 docs/report.md）：', 'docs/')
+    if (!fileRef) return
+    const q = new URLSearchParams({ file_ref: fileRef, verdict: 'done' }).toString()
+    api(`/tasks/${tid}/deliverables?${q}`, token, { method: 'POST' })
+      .then(() => { if (selected) loadDetail(selected); showToast('📄 产出已提交 → 待复核') })
+      .catch((e) => setError(errMsg(e)))
+  }
 
   return (
     <div className="app">
@@ -153,6 +182,7 @@ function App() {
         <div className="toolbar">
           <input className="token" value={token} placeholder="Bearer token"
                  onChange={(e) => setToken(e.target.value)} title="API 访问 token" />
+          <span className={`level-badge l${me?.level || '?'}`}>{me ? `L${me.level}` : '未认证'}</span>
           <button onClick={loadProjects}>刷新</button>
           <button className="primary" onClick={() => setShowFb(true)}>反馈</button>
         </div>
@@ -297,6 +327,11 @@ function App() {
                             {t.reviewer && <span className="who">🔍 {t.reviewer}</span>}
                             {t.has_deliverable && <span className="tag">📄 产出</span>}
                           </div>
+                          {t.status === 'in_progress' && (
+                            <div className="t-actions">
+                              <button className="mini" onClick={() => submitDeliverable(t.task_id)}>提交产出</button>
+                            </div>
+                          )}
                         </div>
                       ))}
                       {ts.length === 0 && <div className="col-empty">—</div>}
@@ -305,14 +340,19 @@ function App() {
                 })}
               </div>
 
-              <h2>审批</h2>
-              {approvals.length === 0 ? <p className="muted">暂无待审批项</p> : (
+              <h2>待办中心</h2>
+              {pendingApprovals.length === 0 ? <p className="muted">暂无待审批项</p> : (
                 <div className="approvals">
-                  {approvals.map((e, i) => (
+                  {pendingApprovals.map((e, i) => (
                     <div className="ap-row" key={i}>
-                      <span className="ap-type">{e.event_type === 'approval.requested' ? '待审批' : '已审批'}</span>
-                      <span className="ap-scope">{e.payload?.scope || ''}</span>
-                      <span className="ap-result">{e.payload?.result || ''}</span>
+                      <span className="ap-type">待审批</span>
+                      <span className="ap-scope">{e.payload?.scope || '流程变更'}</span>
+                      {canL3 ? (
+                        <span className="ap-actions">
+                          <button className="mini ok" onClick={() => decideApproval(e.payload.approval_id, 'approve')}>✅ 批准</button>
+                          <button className="mini danger" onClick={() => decideApproval(e.payload.approval_id, 'reject')}>✕ 拒绝</button>
+                        </span>
+                      ) : <span className="ap-locked">🔒 需 L3 权限</span>}
                     </div>
                   ))}
                 </div>
@@ -350,7 +390,7 @@ function App() {
               <button className="primary" disabled={!fb.content.trim()} onClick={() => {
                 fetch('/api/feedback', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(fb) })
                   .then(() => { setShowFb(false); setFb({ content: '', contact: '', rating: null }) })
-                  .catch((e) => setError(String(e)))
+                  .catch((e) => setError(errMsg(e)))
               }}>提交</button>
             </div>
           </div>

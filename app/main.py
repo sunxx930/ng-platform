@@ -43,6 +43,12 @@ app = FastAPI(title="NG AI Platform", version="0.1.0")
 def health():
     return {"status": "ok"}
 
+
+@app.get("/auth/me")
+def auth_me(auth: dict = Depends(require_auth)):
+    """当前身份与权限级别（前端权限感知：隐藏/禁用 L3 动作）。"""
+    return {"user": auth["user"], "level": auth["level"]}
+
 # 事件正源：设置 DATABASE_URL 时用 PostgreSQL（含 append-only/幂等约束），否则 JSONL
 import os
 log = EventLog()
