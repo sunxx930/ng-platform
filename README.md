@@ -131,9 +131,13 @@ docker compose up --build        # 自动建库 + 迁移 + API/Worker
 - **第二执行层 claude_sdk + openclaw 去耦（2026-08-31）**：`app/adapters/claude_sdk.py` `ClaudeSDKExecutor`（官方 Anthropic SDK，`claude-opus-4-8` + adaptive thinking + effort；`app/agents/run.py --executor claude_sdk`）；**openclaw 去耦**——main.py 移除模块级依赖，`/agents/transfer` 懒加载 + 503 优雅报错，openclaw 仅作外接 agent 联系层，核心不依赖它。执行层三实现：builtin(自研算力) / claude_sdk(Anthropic) / openclaw(仅联系)。测试 43→**45 全绿**。真实 Claude 需设 `ANTHROPIC_API_KEY`。
 
 - **算力已接通 OpenAI（2026-08-31）**：`.env` 激活 OpenAI（`gpt-4o-mini`），DeepSeek 备选注释保留；claude_sdk 为休眠可选实现。**OpenAI 全路径 dogfood 通过**（解析 4 任务 → ng-assistant 自动产出 → in_review）。
+- **多用户 + 注册门（2026-09-01）**：前端先注册/登录才能进主界面（用户客户端，管理员在服务器端走静态 token）；`users`/`auth_tokens` 表 + `events.user_id` 维度 + 项目按用户隔离；`POST /auth/register|login|logout`，`/auth/me` 返回 user_id。测试 57→68。
+- **投影物化 + 乐观锁（2026-09-01，P1-1）**：启用 `projection_version`/`expected_version`——事件写入**同事务**折叠投影到 projects/tasks/agents/feedback_proj/usage_proj 读模型表，读取 O(事件数)→O(行数)；`PATCH /tasks/{tid}/state` 乐观锁（expected_version 不匹配 → 409，事件事务回滚）；孤儿任务（无项目归属）不投影、读路径 replay 兜底；JSONL dev 模式走 replay 推导，输出与投影逐字节一致。测试 68→77。
+
+**迁移/重建**：`run_migrations.py` 应用 003 后若存量事件非空且投影空 → 自动全量重建投影表。手动重建：`DATABASE_URL=... python -m app.projection_rebuild`（TRUNCATE+重放，需超管连接，幂等可反复跑）。
 
 **待做（后续阶段）**：
-- **投影物化/乐观锁**：projection_version / expected_version 启用
-- **前端看板**：React 项目/任务/责任链/审批视图（frontend/ 待建）
+- **真实 IdP 接入**：当前注册用户为平台内置账号（scrypt 密码）；生产可接 OAuth/企业 IdP 作为登录替代
+- **通知真实投递**：ReportWorker 的 notifications.jsonl 目前只写队列，未接真实渠道（邮件/Webhook）
 
 本地 MVP 已放行；正式生产待上述后续项 + 真实 IdP 接入后再评估。

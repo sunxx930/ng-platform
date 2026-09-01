@@ -39,7 +39,23 @@ def main():
     safe_pw = ng_pw.replace("'", "''")
     with eng.begin() as conn:
         conn.execute(text(f"ALTER ROLE ng_app WITH PASSWORD '{safe_pw}'"))
+    # P1-1 投影物化：003 应用后若存量事件非空且投影空 → 自动重建（一次性迁移灌存量）
+    _maybe_rebuild_projection(eng, dburl)
     print("[migrate] 完成")
+
+
+def _maybe_rebuild_projection(eng, dburl):
+    """events>0 且 projects=0 → 全量重建投影表（TRUNCATE+重放，需超管连接）。"""
+    from sqlalchemy import text as _text
+    with eng.connect() as conn:
+        n_events = conn.execute(_text("SELECT count(*) FROM events")).scalar()
+        n_proj = conn.execute(_text("SELECT count(*) FROM projects")).scalar()
+    if not n_events or n_proj:
+        return   # 空库无需重建；投影已非空则不动（避免重复清理业务行）
+    print(f"[migrate] 存量 {n_events} 条事件 → 重建投影表…", flush=True)
+    from app.storage.projection import Projector
+    Projector(eng).rebuild()
+    print("[migrate] 投影重建完成", flush=True)
 
 if __name__ == "__main__":
     main()

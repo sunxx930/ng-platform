@@ -34,16 +34,24 @@ def _content(e: dict) -> tuple:
 
 
 class EventLog:
-    """事件日志存储。默认落本地 JSONL（无 DB 时可运行），配 DB 后走 PostgreSQL。"""
+    """事件日志存储。默认落本地 JSONL（无 DB 时可运行），配 DB 后走 PostgreSQL。
 
-    def __init__(self, engine: Engine | None = None, path: Path | None = None):
+    projector（P1-1 投影物化）：DB 模式下传入 Projector，事件插入同事务折叠投影读模型。
+    JSONL 路径无 projector → 不投影（dev 兜底走 replay 推导）。
+    """
+
+    def __init__(self, engine: Engine | None = None, path: Path | None = None,
+                 projector=None):
         self._engine = engine
         self._path = path or Path("data/events.jsonl")
+        self.projector = projector
 
-    def append(self, event: dict[str, Any]) -> dict:
+    def append(self, event: dict[str, Any],
+               expected_version: int | None = None) -> dict:
         event.setdefault("idempotency_key", None)
         if self._engine is not None:
-            return self._append_db(event)
+            return self._append_db(event, expected_version)
+        # JSONL 路径：expected_version 忽略（replay 推导无锁，乐观锁仅 DB 模式）
         self._path.parent.mkdir(parents=True, exist_ok=True)
         ik = event.get("idempotency_key")
         if ik:
@@ -70,7 +78,8 @@ class EventLog:
                 return r
         return None
 
-    def _append_db(self, event: dict) -> dict:
+    def _append_db(self, event: dict,
+                   expected_version: int | None = None) -> dict:
         ik = event.get("idempotency_key")
         with self._engine.begin() as conn:
             # DB 幂等：ON CONFLICT 原子去重（F4 修复，消除 SELECT-then-INSERT 竞态）
@@ -106,6 +115,10 @@ class EventLog:
                     if _content(stored) != _content(event):
                         raise IdempotencyConflict(
                             f"幂等键 {ik} 已被不同意图占用（内容不一致），拒绝覆盖")
+            # 只有真正插入（RETURNING 有值）才投影：幂等重试不投影、不自增版本
+            if r is not None and self.projector is not None:
+                self.projector.apply(conn, event, expected_version)
+                # 乐观锁冲突在此事务内抛出 → 整个事务回滚（事件也不落库）
         return event
 
     def replay(self, project_id: str | None = None,

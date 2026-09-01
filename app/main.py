@@ -36,6 +36,7 @@ from app.services.llm import LLMClient, LLMConfigError
 from app.services.requirement_parser import RequirementParser
 from app.services.team_matcher import match_team
 from app.storage.event_log import EventLog, IdempotencyConflict
+from app.storage.projection import Projector, OptimisticLockConflict
 from app.storage.user_store import UserStore, UsernameConflict, InvalidCredentials
 
 app = FastAPI(title="NG AI Platform", version="0.1.0")
@@ -118,10 +119,11 @@ if _dburl:
     engine = create_engine(_dburl, pool_pre_ping=True)
     with engine.connect() as _c:      # 启动即校验连接
         _c.execute(__import__('sqlalchemy').text("SELECT 1"))
-    log = EventLog(engine=engine)
+    projector = Projector(engine)      # P1-1 投影物化：DB 模式同步折叠读模型
+    log = EventLog(engine=engine, projector=projector)
     user_store = UserStore(engine=engine)
     authmod.set_user_store(user_store)   # 多用户：注册用户会话 token 走 DB
-    print(f"[main] 事件正源=PostgreSQL ({_dburl.split('@')[-1]})", flush=True)
+    print(f"[main] 事件正源=PostgreSQL ({_dburl.split('@')[-1]}) + 投影物化", flush=True)
 else:
     authmod.set_user_store(user_store)   # dev JSONL 兜底同样注入
 
@@ -137,6 +139,91 @@ def require_level(action: str, actor_level: int | None = None):
 
 def _err(ev: events.EventType, **kw) -> dict:
     return events.new_event(ev, actor="api", payload=kw)
+
+
+def _db_mode() -> bool:
+    """DB 投影模式：engine + projector 齐备才走投影表读取（否则 JSONL replay 推导）。"""
+    return log._engine is not None and getattr(log, "projector", None) is not None
+
+
+def _derive_project_list(events_iter, viewer) -> list[dict]:
+    """replay 纯函数：项目列表（多用户隔离），形状与 Projector.get_projects 一致。"""
+    projects: dict[str, dict] = {}
+    for e in events_iter:
+        if e["event_type"] == events.EventType.PROJECT_CREATED.value:
+            if viewer is not None and e.get("user_id") != viewer:
+                continue
+            projects[e["project_id"]] = {
+                "project_id": e["project_id"],
+                "title": e["payload"].get("title", ""),
+                "goal": e["payload"].get("goal", ""),
+                "status": "active",
+            }
+        elif e["event_type"] in (events.EventType.PROJECT_PAUSED.value,
+                                 events.EventType.PROJECT_ARCHIVED.value) \
+                and e.get("project_id") in projects:
+            projects[e["project_id"]]["status"] = \
+                "paused" if e["event_type"] == events.EventType.PROJECT_PAUSED.value else "archived"
+    return [p for p in projects.values() if p["status"] != "archived"]
+
+
+def _derive_task_list(events_iter, project_id) -> list[dict]:
+    """replay 纯函数：项目任务看板，形状与 Projector.get_tasks 一致。"""
+    tasks: dict[str, dict] = {}
+    for e in events_iter:
+        tid = e.get("task_id")
+        if not tid:
+            continue
+        t = tasks.setdefault(tid, {"task_id": tid, "title": "",
+                                   "status": TaskStatus.TODO.value,
+                                   "owner": None, "reviewer": None,
+                                   "has_deliverable": False})
+        p = e["payload"]
+        if e["event_type"] == events.EventType.TASK_CREATED.value:
+            t["title"] = p.get("title", "")
+        elif e["event_type"] == events.EventType.AGENT_ASSIGNED.value:
+            t[p.get("role", "owner")] = p.get("agent")
+        elif e["event_type"] == events.EventType.TASK_STATE_CHANGED.value:
+            t["status"] = p["to"]
+        elif e["event_type"] == events.EventType.DELIVERABLE_SUBMITTED.value:
+            t["has_deliverable"] = True
+    return list(tasks.values())
+
+
+def _derive_task_project(events_iter) -> str | None:
+    """replay 纯函数：从事件序列解析任务所属项目（F3）。"""
+    for e in events_iter:
+        if e["event_type"] == events.EventType.TASK_CREATED.value:
+            return e.get("project_id")
+    return None
+
+
+def _task_project_id(tid: str) -> str | None:
+    """任务所属项目：DB 投影模式查 tasks 行（缺失回退 replay），JSONL 走 replay。"""
+    if _db_mode():
+        pid = log.projector.get_project_id(tid)
+        if pid is not None:
+            return pid
+    return _derive_task_project(log.replay(task_id=tid))
+
+
+def _derive_task_context(events_iter, task_id) -> dict:
+    """replay 纯函数：任务上下文，形状与 Projector.get_task_context 一致。"""
+    ctx: dict = {"task_id": task_id, "title": "", "description": "",
+                 "deliverables": [], "owner": None, "reviewer": None,
+                 "status": TaskStatus.TODO.value, "deadline_ts": None}
+    for e in events_iter:
+        p = e["payload"]
+        if e["event_type"] == events.EventType.TASK_CREATED.value:
+            ctx.update(title=p.get("title", ""), description=p.get("description", ""),
+                       deliverables=list(p.get("deliverables") or []),
+                       deadline_ts=p.get("deadline_ts"))
+        elif e["event_type"] == events.EventType.AGENT_ASSIGNED.value:
+            role = p.get("role", "owner")
+            ctx[role] = p.get("agent") or ctx.get(role)
+        elif e["event_type"] == events.EventType.TASK_STATE_CHANGED.value:
+            ctx["status"] = p["to"]
+    return ctx
 
 
 # ---------- 项目 ----------
@@ -159,33 +246,24 @@ def list_projects(auth: dict = Depends(require_auth)):
     """
     require_level("read_project", auth["level"])
     viewer = auth.get("user_id")
-    projects: dict[str, dict] = {}
-    for e in log.replay():
-        if e["event_type"] == events.EventType.PROJECT_CREATED.value:
-            # 多用户隔离：只有注册用户拥有者能看自己的项目
-            if viewer is not None and e.get("user_id") != viewer:
-                continue
-            projects[e["project_id"]] = {
-                "project_id": e["project_id"],
-                "title": e["payload"].get("title", ""),
-                "goal": e["payload"].get("goal", ""),
-                "status": "active",
-            }
-        elif e["event_type"] in (events.EventType.PROJECT_PAUSED.value,
-                                 events.EventType.PROJECT_ARCHIVED.value) \
-                and e.get("project_id") in projects:
-            projects[e["project_id"]]["status"] = \
-                "paused" if e["event_type"] == events.EventType.PROJECT_PAUSED.value else "archived"
-    return {"projects": [p for p in projects.values() if p["status"] != "archived"]}
+    if _db_mode():
+        projects = log.projector.get_projects(viewer)
+    else:
+        projects = _derive_project_list(log.replay(), viewer)
+    return {"projects": projects}
 
 
 @app.post("/projects/{pid}/archive")
 def archive_project(pid: str, auth: dict = Depends(require_auth)):
     """终止/删除项目：使用者（owner，L1）随时有权。从看板移除，事件留审计（append-only）。"""
     require_level("read_project", auth["level"])   # L1：owner 随时可终止/删除
-    evs = log.replay(project_id=pid)
-    if not any(e["event_type"] == events.EventType.PROJECT_CREATED.value for e in evs):
-        raise HTTPException(404, "project not found")
+    if _db_mode():
+        if not log.projector.project_exists(pid):
+            raise HTTPException(404, "project not found")
+    else:
+        evs = log.replay(project_id=pid)
+        if not any(e["event_type"] == events.EventType.PROJECT_CREATED.value for e in evs):
+            raise HTTPException(404, "project not found")
     log.append(events.new_event(events.EventType.PROJECT_ARCHIVED, f"user:{auth['user']}",
                                 {"reason": "owner_terminated"}, project_id=pid,
                                 idempotency_key=f"archive:{pid}"))
@@ -196,28 +274,16 @@ def archive_project(pid: str, auth: dict = Depends(require_auth)):
 def list_tasks(pid: str, auth: dict = Depends(require_auth)):
     """项目任务看板数据（从事件推导：title/status/owner/reviewer/has_deliverable）。"""
     require_level("read_project", auth["level"])
-    evs = log.replay(project_id=pid)
-    if not evs:
-        raise HTTPException(404, "project not found")
-    tasks: dict[str, dict] = {}
-    for e in evs:
-        tid = e.get("task_id")
-        if not tid:
-            continue
-        t = tasks.setdefault(tid, {"task_id": tid, "title": "",
-                                   "status": TaskStatus.TODO.value,
-                                   "owner": None, "reviewer": None,
-                                   "has_deliverable": False})
-        p = e["payload"]
-        if e["event_type"] == events.EventType.TASK_CREATED.value:
-            t["title"] = p.get("title", "")
-        elif e["event_type"] == events.EventType.AGENT_ASSIGNED.value:
-            t[p.get("role", "owner")] = p.get("agent")
-        elif e["event_type"] == events.EventType.TASK_STATE_CHANGED.value:
-            t["status"] = p["to"]
-        elif e["event_type"] == events.EventType.DELIVERABLE_SUBMITTED.value:
-            t["has_deliverable"] = True
-    return {"tasks": list(tasks.values())}
+    if _db_mode():
+        tasks = log.projector.get_tasks(pid)
+        if not log.projector.project_exists(pid):
+            raise HTTPException(404, "project not found")
+    else:
+        evs = log.replay(project_id=pid)
+        if not evs:
+            raise HTTPException(404, "project not found")
+        tasks = _derive_task_list(evs, pid)
+    return {"tasks": tasks}
 
 
 @app.get("/projects/{pid}/context")
@@ -333,8 +399,10 @@ def register_agent(name: str, capability: str = "", role: str = "",
 
 @app.get("/agents")
 def list_agents(auth: dict = Depends(require_auth)):
-    """当前 agent 注册表（事件溯源重建）。"""
+    """当前 agent 注册表（latest-wins，DB 投影 / JSONL replay）。"""
     require_level("read_project", auth["level"])
+    if _db_mode():
+        return {"agents": log.projector.get_agents()}
     return {"agents": _agents_registry()}
 
 
@@ -486,6 +554,8 @@ def submit_feedback(body: FeedbackIn, auth: dict = Depends(require_auth)):
 def list_feedback(auth: dict = Depends(require_auth)):
     """反馈列表（owner 查看试用者意见）。"""
     require_level("read_audit", auth["level"])
+    if _db_mode():
+        return {"feedback": log.projector.get_feedback()}
     items = []
     for e in log.replay():
         if e["event_type"] == events.EventType.FEEDBACK_SUBMITTED.value:
@@ -514,6 +584,8 @@ def _record_usage(project_id: str | None, task_id: str | None,
 def get_usage(auth: dict = Depends(require_auth)):
     """LLM 用量聚合（1M 上下文限制：展示已用 vs 上限，应对=接近时预警）。"""
     require_level("read_audit", auth["level"])
+    if _db_mode():
+        return log.projector.get_usage()
     rows = [e for e in log.replay()
             if e["event_type"] == events.EventType.USAGE_RECORDED.value]
     tin = sum(e["payload"].get("input_tokens", 0) for e in rows)
@@ -587,33 +659,77 @@ def create_task(pid: str, title: str, description: str = "",
 
 @app.get("/tasks/{tid}/context")
 def task_context(tid: str, auth: dict = Depends(require_auth)):
-    """任务上下文（供 agent 执行前读取）：title/desc/deliverables/owner/reviewer/status/deadline。"""
+    """任务上下文（供 agent 执行前读取）：title/desc/deliverables/owner/reviewer/status/deadline。
+
+    DB 投影模式走 tasks 投影行（含 expected_version），行缺失回退 replay（孤儿任务）。
+    """
     require_level("read_project", auth["level"])
+    if _db_mode():
+        ctx = log.projector.get_task_context(tid)
+        if ctx is None:
+            evs = log.replay(task_id=tid)
+            if not evs:
+                raise HTTPException(404, "task not found")
+            return _derive_task_context(evs, tid)
+        row = log.projector.get_task_row(tid)
+        ctx["expected_version"] = row["expected_version"] if row else None
+        return ctx
     evs = log.replay(task_id=tid)
     if not evs:
         raise HTTPException(404, "task not found")
-    ctx: dict = {"task_id": tid, "title": "", "description": "",
-                 "deliverables": [], "owner": None, "reviewer": None,
-                 "status": TaskStatus.TODO.value, "deadline_ts": None}
-    for e in evs:
-        p = e["payload"]
-        if e["event_type"] == events.EventType.TASK_CREATED.value:
-            ctx.update(title=p.get("title", ""), description=p.get("description", ""),
-                       deliverables=list(p.get("deliverables") or []),
-                       deadline_ts=p.get("deadline_ts"))
-        elif e["event_type"] == events.EventType.AGENT_ASSIGNED.value:
-            role = p.get("role", "owner")
-            ctx[role] = p.get("agent") or ctx.get(role)
-        elif e["event_type"] == events.EventType.TASK_STATE_CHANGED.value:
-            ctx["status"] = p["to"]
+    ctx = _derive_task_context(evs, tid)
+    ctx["expected_version"] = None    # JSONL 无锁，前端按可选字段处理
     return ctx
 
 
 @app.patch("/tasks/{tid}/state")
 def change_state(tid: str, to: TaskStatus, actor: str = "system",
-                 idempotency_key: Optional[str] = None, auth: dict = Depends(require_auth)):
-    """状态转移（白名单校验）。当前骨架用事件序列推导当前状态。"""
+                 idempotency_key: Optional[str] = None,
+                 expected_version: Optional[int] = None,
+                 auth: dict = Depends(require_auth)):
+    """状态转移（白名单校验 + 乐观锁）。
+
+    DB 投影模式：tasks.expected_version 乐观锁——客户端带预期版本，不匹配 409；
+    无 expected_version（worker/兼容路径）放行但正常自增。JSONL 模式无锁（replay 推导）。
+    幂等语义不变：同状态重试 200；同幂等键不同意图 409。
+    """
     require_level("change_task_state", auth["level"])
+    if _db_mode():
+        row = log.projector.get_task_row(tid)
+        if row is None:
+            evs = log.replay(task_id=tid)
+            if not evs:
+                raise HTTPException(404, "task not found")
+            state = _derive_task_context(evs, tid)["status"]
+            state = TaskStatus(state)
+            project_id = _derive_task_project(evs)
+            cur_v = None
+        else:
+            state = TaskStatus(row["status"])
+            project_id = row["project_id"]
+            cur_v = row["expected_version"]
+        # 幂等优先：同状态重试 → 200（不判非法转移）
+        if state == to:
+            return {"task_id": tid, "status": to.value, "idempotent": True}
+        # 状态机校验：非法转移 400（先 400 后 409，非法不报成并发冲突）
+        try:
+            new = transition(state, to)
+        except InvalidTransition as ex:
+            raise HTTPException(400, str(ex))
+        # 乐观锁预检：带过期版本直接 409（挡掉大多数已过期请求，不落任何事件）
+        if expected_version is not None and cur_v is not None \
+                and expected_version != cur_v:
+            raise HTTPException(
+                409, f"任务状态已被修改（版本 {cur_v} ≠ 预期 {expected_version}），请刷新后重试")
+        log.append(events.new_event(
+            events.EventType.TASK_STATE_CHANGED, actor,
+            {"from": state.value, "to": new.value},
+            project_id=project_id, task_id=tid,
+            idempotency_key=idempotency_key),
+            expected_version=cur_v)
+        return {"task_id": tid, "status": new.value,
+                "expected_version": (cur_v or 0) + 1}
+    # JSONL 路径：replay 推导，无锁
     evs = log.replay(task_id=tid)
     state = TaskStatus.TODO
     project_id = None
@@ -622,7 +738,6 @@ def change_state(tid: str, to: TaskStatus, actor: str = "system",
             project_id = e.get("project_id")      # F3: 从 TASK_CREATED 解析项目
         if e["event_type"] == events.EventType.TASK_STATE_CHANGED.value:
             state = TaskStatus(e["payload"]["to"])
-    # P1 幂等：同状态重试 → 200（不判非法转移）
     if state == to:
         return {"task_id": tid, "status": to.value, "idempotent": True}
     try:
@@ -650,6 +765,11 @@ async def idempotency_conflict_handler(request: Request, exc: IdempotencyConflic
     """P1：同幂等键不同意图 → 409，不再静默丢写返回假 200。"""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
+@app.exception_handler(OptimisticLockConflict)
+async def optimistic_lock_conflict_handler(request: Request, exc: OptimisticLockConflict):
+    """乐观锁：并发状态修改（事件事务已回滚，无半写状态）→ 409。"""
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
 @app.exception_handler(PendingApproval)
 async def pending_approval_handler(request: Request, exc: PendingApproval):
     """审批门通用：动作需审批 → 409，带 approval_id 供去 POST /approvals/{id}/decision。"""
@@ -668,17 +788,22 @@ def submit_deliverable(tid: str, file_ref: str,
     verdict=blocked → 自动推进 blocked。幂等键绑定内容（P1 内容寻址）：同内容重试幂等。
     """
     require_level("submit_deliverable", auth["level"])
-    evs = log.replay(task_id=tid)
-    project_id = next((e.get("project_id") for e in evs
-                       if e["event_type"] == events.EventType.TASK_CREATED.value), None)
+    project_id = _task_project_id(tid)
     if project_id is None:
         raise HTTPException(404, "task not found")
     if verdict not in ("done", "blocked", "partial"):
         raise HTTPException(400, f"verdict 非法: {verdict}")
     state = TaskStatus.TODO
-    for e in evs:
-        if e["event_type"] == events.EventType.TASK_STATE_CHANGED.value:
-            state = TaskStatus(e["payload"]["to"])
+    if _db_mode():
+        row = log.projector.get_task_row(tid)
+        if row is not None:
+            state = TaskStatus(row["status"])
+    # reviewer / 已有复核判断仍需事件序列（review.requested 不投影）
+    evs = log.replay(task_id=tid)
+    if state == TaskStatus.TODO:
+        for e in evs:
+            if e["event_type"] == events.EventType.TASK_STATE_CHANGED.value:
+                state = TaskStatus(e["payload"]["to"])
     idem = f"deliverable:{tid}:{file_ref}:" + hashlib.sha256(
         f"{verdict}|{summary}".encode()).hexdigest()[:10]
     log.append(events.new_event(
@@ -724,9 +849,7 @@ def submit_deliverable(tid: str, file_ref: str,
 def task_heartbeat(tid: str, agent: str = "agent", auth: dict = Depends(require_auth)):
     """Agent 心跳：更新任务活跃状态（F1：让 HeartbeatWorker 有据可依）。"""
     require_level("change_task_state", auth["level"])
-    evs = log.replay(task_id=tid)
-    project_id = next((e.get("project_id") for e in evs
-                       if e["event_type"] == events.EventType.TASK_CREATED.value), None)
+    project_id = _task_project_id(tid)
     log.append(events.new_event(
         events.EventType.AGENT_HEARTBEAT, agent, {},
         project_id=project_id, task_id=tid,
@@ -739,9 +862,7 @@ def task_heartbeat(tid: str, agent: str = "agent", auth: dict = Depends(require_
 def request_review(tid: str, auth: dict = Depends(require_auth)):
     """创建复核请求（绑定任务，返回 review_id）。"""
     require_level("change_task_state", auth["level"])
-    evs = log.replay(task_id=tid)
-    pid = next((e.get("project_id") for e in evs
-                if e["event_type"] == events.EventType.TASK_CREATED.value), None)
+    pid = _task_project_id(tid)
     if pid is None:
         raise HTTPException(404, "task not found")   # 对象绑定
     # 幂等：同任务已有复核请求 → 返回同 review_id（重试不新建）
@@ -777,9 +898,7 @@ def review_decision(rid: str, verdict: ReviewVerdict, auth: dict = Depends(requi
 def request_approval(tid: str, scope: str = "flow_change", auth: dict = Depends(require_auth)):
     """创建审批请求（绑定任务，需 L3）。"""
     require_level("approve_action", auth["level"])
-    evs = log.replay(task_id=tid)
-    pid = next((e.get("project_id") for e in evs
-                if e["event_type"] == events.EventType.TASK_CREATED.value), None)
+    pid = _task_project_id(tid)
     if pid is None:
         raise HTTPException(404, "task not found")
     # 幂等：同任务+scope 已有审批请求 → 返回同 approval_id（重试不新建）
