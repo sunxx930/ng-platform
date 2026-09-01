@@ -1,6 +1,7 @@
 """多用户回归（2026-09-01）：注册/登录门 + 认证 user_id + 项目按用户隔离 + 事件 user 维度。
 
-运行: cd ~/Desktop/ng-platform && .venv/bin/python -m pytest tests/ -q
+运行（mac/Linux）: cd ~/Desktop/ng-platform && .venv/bin/python -m pytest tests/ -q
+运行（Windows）: cd ~/Desktop/ng-platform && .venv\Scripts\python -m pytest tests/ -q
 """
 import sys
 from pathlib import Path

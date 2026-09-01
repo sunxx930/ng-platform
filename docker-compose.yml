@@ -49,7 +49,10 @@ services:
       - ANTHROPIC_API_KEY
       - LLM_API_KEY
     volumes:
-      - ~/.openclaw/shared/messages:/shared/messages:rw
+      # Windows 兼容（2026-09-01）：compose 不展开 ~；用环境变量，Windows 设
+      # OPENCLAW_SHARED_DIR 为绝对路径（如 C:\Users\xxx\.openclaw\shared\messages）。
+      # 回退走宿主 home 下（用户可写；项目根可能是 root 只读）。
+      - ${OPENCLAW_SHARED_DIR:-~/ng-platform-openclaw/shared/messages}:/shared/messages:rw
     ports:
       - "8080:8080"   # 远程访问：绑定所有接口（8000 被 ssh 隧道占用，改 8080）
     depends_on:
@@ -80,7 +83,7 @@ services:
       - ANTHROPIC_API_KEY
       - LLM_API_KEY
     volumes:
-      - ~/.openclaw/shared/messages:/shared/messages:rw
+      - ${OPENCLAW_SHARED_DIR:-~/ng-platform-openclaw/shared/messages}:/shared/messages:rw
       - ./artifacts:/app/artifacts:rw   # P1：自研 agent 产出持久卷，容器销毁不丢
     depends_on:
       db:
@@ -89,8 +92,29 @@ services:
         condition: service_completed_successfully
     command: python -m app.workers
 
+  # openclaw gateway（Windows 兼容 2026-09-01，可选，profile 启停）：
+  #   docker compose --profile openclaw up -d
+  # 启动后配 OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789 + OPENCLAW_GATEWAY_TOKEN
+  # 让 ng-platform 经 gateway 调用外接 agent（Windows 无需本机装 openclaw CLI）。
+  # 镜像：ghcr.io/phioranex/openclaw-docker（社区预构建，每日随 openclaw 更新）
+  openclaw-gateway:
+    image: ghcr.io/phioranex/openclaw-docker:latest
+    profiles: ["openclaw"]
+    container_name: openclaw-gateway
+    restart: unless-stopped
+    environment:
+      OPENCLAW_GATEWAY_PORT: 18789
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+    ports:
+      - "18789:18789"
+    volumes:
+      - openclaw-config:/home/node/.openclaw
+      - openclaw-workspace:/home/node/.openclaw/workspace
+
 volumes:
   pgdata:
+  openclaw-config:
+  openclaw-workspace:
 
 # 安全（2026-08-31）：LLM API key 走 compose secrets（挂载为文件），
 # 避免 docker compose config/日志 渲染出明文 key。值来自 gitignore 的 .secrets/。

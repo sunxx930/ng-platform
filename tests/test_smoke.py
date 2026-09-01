@@ -1,6 +1,7 @@
 """MVP 冒烟测试 —— 覆盖复核门禁项（F1-F6 + 权限 + 审计 + 幂等）。
 
-运行: cd ~/Desktop/ng-platform && .venv/bin/python -m pytest tests/ -q
+运行（mac/Linux）: cd ~/Desktop/ng-platform && .venv/bin/python -m pytest tests/ -q
+运行（Windows）: cd ~/Desktop/ng-platform && .venv\Scripts\python -m pytest tests/ -q
 """
 import sys
 from pathlib import Path

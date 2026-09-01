@@ -48,10 +48,17 @@ class AgentResult:
 
 
 def _cli_agent(message: str, agent_id: str, session_key: str | None = None) -> str:
-    """通过 openclaw agent CLI 触发一次 agent turn（同步，拿回复）。"""
+    """通过 openclaw agent CLI 触发一次 agent turn（同步，拿回复）。
+
+    openclaw agent CLI 默认走 gateway。Windows 兼容（2026-09-01）：
+    Docker 里跑 openclaw gateway，配 OPENCLAW_GATEWAY_URL + OPENCLAW_GATEWAY_TOKEN
+    指向它，本机无需装 openclaw 即可同步调用（否则走本机 gateway）。
+    """
     cmd = [OPENCLAW_BIN, "agent", "--agent", agent_id, "-m", message, "--json"]
     if session_key:
         cmd += ["--session-key", session_key]
+    # subprocess 默认继承父进程 env；OPENCLAW_GATEWAY_URL/TOKEN 由部署方注入即可
+    # （Windows：Docker gateway + 这两个变量 → 本机无需装 openclaw CLI）
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if proc.returncode != 0:
         raise RuntimeError(f"openclaw agent 调用失败 rc={proc.returncode}: {proc.stderr[:500]}")

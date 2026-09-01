@@ -1,7 +1,8 @@
 """投影物化 + 乐观锁回归（P1-1，2026-09-01）。
 
 DB 模式：事件插入同事务折叠投影读模型；tasks.expected_version 乐观锁。
-运行: cd ~/Desktop/ng-platform && .venv/bin/python -m pytest tests/test_projection.py -q
+运行（mac/Linux）: cd ~/Desktop/ng-platform && .venv/bin/python -m pytest tests/test_projection.py -q
+运行（Windows）: cd ~/Desktop/ng-platform && .venv\Scripts\python -m pytest tests/test_projection.py -q
 需要本地 PG（ng_platform 库，含 003 迁移 + 投影表）。
 """
 import sys
@@ -75,7 +76,8 @@ def test_projection_matches_replay(db_log):
     """同事件序列：Projector 读取 == replay 推导（逐字节一致）。"""
     log, admin, proj = db_log
     from app.main import _derive_project_list, _derive_task_list, _derive_task_context
-    jlog = EventLog(path=Path(f"/tmp/ptest-{uuid.uuid4()}.jsonl"))
+    import tempfile
+    jlog = EventLog(path=Path(tempfile.gettempdir()) / f"ptest-{uuid.uuid4()}.jsonl")
 
     pid = str(uuid.uuid4())
     tid = str(uuid.uuid4())

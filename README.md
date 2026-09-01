@@ -44,13 +44,20 @@ ng-platform/
 ```bash
 # Python 3.12+（代码使用 PEP 604 语法）
 python3.12 -m venv .venv
+# mac/Linux:
 .venv/bin/pip install -r requirements.txt          # 网络受限可用清华源
+# Windows (PowerShell):
+# .venv\Scripts\python -m pip install -r requirements.txt
 
-# 启动 API
-.venv/bin/uvicorn app.main:app --reload            # http://127.0.0.1:8000
+# 启动 API（dev 端口 8001，与前端 vite proxy 一致）
+# mac/Linux:
+.venv/bin/python -m uvicorn app.main:app --reload --port 8001   # http://127.0.0.1:8001
+# Windows:
+# .venv\Scripts\python -m uvicorn app.main:app --reload --port 8001
 
 # 启动调度 Worker（另开终端）
-.venv/bin/python -m app.workers
+# mac/Linux:  .venv/bin/python -m app.workers
+# Windows:    .venv\Scripts\python -m app.workers
 ```
 
 ### Docker + PostgreSQL（生产模式）
@@ -62,8 +69,10 @@ docker compose up --build        # 自动建库 + 迁移 + API/Worker
 ```
 
 - 服务显式 `NG_ENV=production`：token/密码缺值或默认值 → 拒绝启动（严格模式）
-- 端口收敛：db 不向宿主发布（仅内部网络）；api 仅绑定 `127.0.0.1:8000`
-- 全链路实测：`POSTGRES_PASSWORD=<强> NG_APP_PASSWORD=<强> bash scripts/docker_e2e.sh`
+- 端口收敛：db 不向宿主发布（仅内部网络）；api 绑定 `8080`（生产）
+- 全链路实测（跨平台 Python 版）：
+  `POSTGRES_PASSWORD=<强> NG_APP_PASSWORD=<强> python3 scripts/docker_e2e.py`
+  （Linux CI 也可用 bash 版 `bash scripts/docker_e2e.sh`）
 - CI 复跑：`.github/workflows/e2e.yml`（待 git 仓库初始化后启用）
 
 ### 测试
@@ -104,6 +113,14 @@ docker compose up --build        # 自动建库 + 迁移 + API/Worker
 ```
 
 `message` 模式写入 `~/.openclaw/shared/messages/ng-platform-<agent>-transfer-<uuid>.md`。
+
+## Windows 兼容（2026-09-01）
+
+- **Python 后端跨平台**：全部文件 I/O 用 `pathlib.Path` + 相对路径，依赖均有 Windows wheel；dev 启动见上文双平台命令。
+- **openclaw 全功能一致**：`openclaw agent` CLI 走 gateway（`--local` 才是嵌入式）。Windows 上**用 Docker 跑 openclaw gateway**，配 `OPENCLAW_GATEWAY_URL` + `OPENCLAW_GATEWAY_TOKEN` 指向它，ng-platform 无需本机装 openclaw 即可同步调用外接 agent（`app/adapters/openclaw.py` 已实测验证 `openclaw agent --agent X -m ... --json` 经 gateway 正常返回）。mac 本机 openclaw 已装则直接用默认 gateway。未配置时 `/agents/transfer` 优雅返回 503。
+- **Docker 部署**：compose 的 `~/.openclaw` 挂载已改环境变量——Windows 设 `OPENCLAW_SHARED_DIR` 为绝对路径（如 `C:\Users\xxx\.openclaw\shared\messages`），不设则回退 `./.openclaw/shared/messages`（相对 compose 目录）。openclaw gateway 也可在 Docker 里跑（见 `docker-compose.yml` 可选服务），经 `OPENCLAW_GATEWAY_URL`/`OPENCLAW_GATEWAY_TOKEN` 接入。
+- **E2E**：`scripts/docker_e2e.py` 跨平台（httpx + docker compose），Windows 用它；`scripts/docker_e2e.sh` 保留给 Linux CI。
+- **requirements**：`uvicorn[standard]` 的 uvloop 在 Windows 由 pip marker 自动跳过（补 colorama）；psycopg/pgvector/anthropic/httpx 均有 Windows wheel。Windows 首次部署建议实机 `pip install -r requirements.txt` 验证一次。
 
 ## 配置（环境变量）
 

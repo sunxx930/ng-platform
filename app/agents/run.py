@@ -1,6 +1,7 @@
 """运行 NG agent 执行一个任务（模型中立执行层）。
 
-用法: .venv/bin/python -m app.agents.run <task_id> [--executor builtin|claude_sdk] [--base ...] [--token ...]
+用法（mac/Linux）: .venv/bin/python -m app.agents.run <task_id> [--executor builtin|claude_sdk] [--base ...] [--token ...]
+用法（Windows）: .venv\\Scripts\\python -m app.agents.run <task_id> [--executor ...]
 流程: 读任务上下文 → 执行器产出 → 落盘 artifacts/ → POST deliverables(verdict=done) → 自动 in_review
 """
 from __future__ import annotations

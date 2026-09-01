@@ -1,6 +1,7 @@
 """DB 模式回归 —— 事件正源用 PostgreSQL（本机 Postgres.app :5433）。
 
-运行: cd ~/Desktop/ng-platform && .venv/bin/python -m pytest tests/test_db.py -q
+运行（mac/Linux）: cd ~/Desktop/ng-platform && .venv/bin/python -m pytest tests/test_db.py -q
+运行（Windows）: cd ~/Desktop/ng-platform && .venv\Scripts\python -m pytest tests/test_db.py -q
 需要本地 PG（ng_platform 库已建，含 schema + append-only 迁移）。
 """
 import sys

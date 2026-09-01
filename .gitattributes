@@ -1,0 +1,9 @@
+# Windows 兼容（2026-09-01）：锁 LF，防 core.autocrlf=true 把脚本转 CRLF
+# （.sh shebang 遇 CRLF → "bad interpreter"，直接跑不了）
+*.sh   text eol=lf
+*.py   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.sql  text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
