@@ -58,7 +58,15 @@ class AutoAgentWorker(Worker):
 
         P0 修复（2026-08-31）：与 main._agents_registry 一致用 **latest wins**，
         取该 agent 最近一次注册的 executor（先 builtin 后 openclaw → 判 openclaw，不误执行）。
+        P2-4（2026-09-01）：DB 投影模式走 agents 表 latest-wins（O(1) 查询，替代全量回放）；
+        JSONL 模式保留全量回放（无投影表）。
         """
+        if self._log._engine is not None and getattr(self._log, "projector", None) is not None:
+            # 投影 agents 表已 latest-wins（每 name 一行），直接查 executor
+            for a in self._log.projector.get_agents():
+                if a.get("name") == owner:
+                    return a.get("executor", "builtin") == "builtin"
+            return False
         found = None
         for e in self._log.replay():
             if e["event_type"] == events.EventType.AGENT_REGISTERED.value \
