@@ -19,3 +19,9 @@ __pycache__/
 .DS_Store
 node_modules/
 .env.deploy
+
+# PyInstaller 打包产物
+build/
+dist/
+*.dmg
+*.pkg
