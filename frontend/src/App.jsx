@@ -374,9 +374,9 @@ function App() {
             <div className="p-sub">{usage?.calls || 0} 次调用 · 输入 {fmtTokens(usage?.input_tokens || 0)} · 输出 {fmtTokens(usage?.output_tokens || 0)}</div>
           </div>
 
-          <h3>项目</h3>
+          <h3>我的项目</h3>
           {projects.length === 0 ? (
-            <div className="empty">还没有项目，上面提个需求就开始了</div>
+            <div className="empty">还没有项目 —— 上面提个需求，第一个项目就开始了</div>
           ) : (
             <ul>
               {projects.map((p) => (
@@ -426,8 +426,9 @@ function App() {
             projects.length === 0 ? (
               <div className="welcome">
                 <div className="welcome-icon">🐳</div>
-                <div className="welcome-title">从左边选一个项目，或上面提个新需求</div>
-                <div className="welcome-sub">每个项目会展开：任务看板、审批队列、完整审计流</div>
+                <div className="welcome-title">👋 欢迎，{session.username} —— 这是你的工作台</div>
+                <div className="welcome-sub">在上面「把目标交给平台」，它会自动拆任务、派 agent、产出并复核；每个项目展开就是任务看板 + 审批队列 + 完整审计流</div>
+                <button className="primary big" onClick={() => document.querySelector('.goal-title')?.focus()}>🚀 提第一个需求</button>
               </div>
             ) : (
               <div className="proj-grid">

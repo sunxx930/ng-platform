@@ -146,7 +146,7 @@ select.advance { background: var(--bg-soft); border: 1px solid var(--line); colo
 .welcome { text-align: center; padding: 70px 20px; border: 1px dashed var(--line-2); border-radius: var(--radius); }
 .welcome-icon { font-size: 52px; margin-bottom: 14px; }
 .welcome-title { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
-.welcome-sub { color: var(--muted); }
+.welcome-sub { color: var(--muted); margin: 0 0 22px; }
 .loading { color: var(--muted); padding: 60px; text-align: center; }
 
 /* 任务看板 */
