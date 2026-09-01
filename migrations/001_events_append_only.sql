@@ -18,11 +18,9 @@ REVOKE ALL ON TABLE events FROM ng_app;
 GRANT SELECT, INSERT ON TABLE events TO ng_app;
 GRANT USAGE, SELECT ON SEQUENCE events_id_seq TO ng_app;
 
--- 3) 其他表给应用角色常规权限（events 之外的业务表）
-GRANT SELECT, INSERT, UPDATE ON TABLE projects, tasks, sessions, agents,
-    messages, deliverables, reviews, approvals, handovers, worker_runs, deliveries
+-- 3) 其他表给应用角色常规权限（events 之外的业务表；死表已移除 2026-09-01，见 004）
+GRANT SELECT, INSERT, UPDATE ON TABLE projects, tasks, agents, worker_runs
   TO ng_app;
-GRANT USAGE, SELECT ON SEQUENCE deliveries_id_seq TO ng_app;
 
 -- 4) 数据库层拦截：事件表拒改（防御性触发器）
 CREATE OR REPLACE FUNCTION fn_events_append_only() RETURNS trigger AS $$

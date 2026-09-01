@@ -64,54 +64,6 @@ CREATE TABLE tasks (
 );
 CREATE INDEX idx_tasks_project ON tasks(project_id);
 
-CREATE TABLE sessions (
-  id           UUID PRIMARY KEY,
-  project_id   UUID NOT NULL REFERENCES projects(id),
-  title        TEXT
-);
-
-CREATE TABLE messages (
-  id            UUID PRIMARY KEY,
-  session_id    UUID NOT NULL REFERENCES sessions(id),
-  source        TEXT NOT NULL,                    -- user|agent|system
-  body          TEXT,
-  media         JSONB NOT NULL DEFAULT '[]',
-  aggregate_id  UUID,
-  idempotency_key TEXT UNIQUE,                    -- 幂等（15.3）
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE deliverables (
-  id           UUID PRIMARY KEY,
-  task_id      UUID NOT NULL REFERENCES tasks(id),
-  file_ref     TEXT NOT NULL,
-  version      INT  NOT NULL DEFAULT 1,
-  hash         TEXT NOT NULL,
-  source       TEXT,
-  idempotency_key TEXT UNIQUE,                    -- 幂等（15.3）
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE reviews (
-  id           UUID PRIMARY KEY,
-  task_id      UUID NOT NULL REFERENCES tasks(id),
-  reviewer_id  UUID NOT NULL,
-  opinion      TEXT,
-  verdict      TEXT NOT NULL,                     -- pass|reject|needs_changes|inconclusive
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE approvals (
-  id           UUID PRIMARY KEY,
-  scope        TEXT NOT NULL,
-  action_ref   TEXT,
-  approver_id  UUID,
-  result       TEXT,                              -- approve|reject
-  reason       TEXT,
-  idempotency_key TEXT UNIQUE,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 -- 审计正源（15.2：禁止 UPDATE/DELETE）
 CREATE TABLE events (
   id             BIGSERIAL PRIMARY KEY,
@@ -128,16 +80,6 @@ CREATE INDEX idx_events_project ON events(project_id, created_at);
 CREATE INDEX idx_events_task    ON events(task_id);
 CREATE INDEX idx_events_user    ON events(user_id);
 
--- 交接摘要
-CREATE TABLE handovers (
-  id           UUID PRIMARY KEY,
-  task_id      UUID NOT NULL,
-  summary      TEXT NOT NULL,
-  pending      JSONB NOT NULL DEFAULT '[]',
-  next_owner   UUID,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 -- Worker 租约（15.4）
 CREATE TABLE worker_runs (
   id            UUID PRIMARY KEY,
@@ -153,18 +95,11 @@ CREATE TABLE worker_runs (
 );
 CREATE INDEX idx_worker_runs_heartbeat ON worker_runs(heartbeat);
 
--- 投递/通知（15.3）
-CREATE TABLE deliveries (
-  id             BIGSERIAL PRIMARY KEY,
-  task_id        UUID,
-  idempotency_key TEXT UNIQUE,
-  attempt        INT  NOT NULL DEFAULT 0,
-  status         TEXT NOT NULL DEFAULT 'pending', -- pending|sent|failed|dead
-  failure_reason TEXT,
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 -- 事件不可篡改：DB 角色仅授权 INSERT（补强项 15.2 由迁移/权限脚本强制）
+
+-- 死表已移除（2026-09-01，P1-3）：sessions/messages/deliverables/reviews/
+-- approvals/handovers/deliveries 曾为「关系表 + 事件双写」设计遗留，业务状态
+-- 现已全部走 events 审计正源，7 表 0 行 0 引用。存量库由迁移 004 显式 DROP。
 
 -- 投影读模型（2026-09-01，P1-1 投影物化）：feedback/usage 全量投影表
 CREATE TABLE feedback_proj (
