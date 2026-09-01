@@ -226,6 +226,63 @@ def _derive_task_context(events_iter, task_id) -> dict:
     return ctx
 
 
+# ---------- 通知（P1-2 事件派生，按用户项目隔离） ----------
+_NOTIFY_EVENTS = {
+    events.EventType.TASK_STATE_CHANGED.value,
+    events.EventType.REVIEW_DECIDED.value,
+    events.EventType.APPROVAL_DECIDED.value,
+}
+
+
+def _notify_summary(event: dict) -> str:
+    """事件 → 中文摘要（复用前端 EVENT_LABEL 语义）。"""
+    p = event["payload"]
+    et = event["event_type"]
+    if et == events.EventType.TASK_STATE_CHANGED.value:
+        return f"任务状态 → {p.get('to', '?')}"
+    if et == events.EventType.REVIEW_DECIDED.value:
+        return f"复核结论: {p.get('verdict', '?')}"
+    if et == events.EventType.APPROVAL_DECIDED.value:
+        return f"审批: {'已批准' if p.get('result') == 'approve' else '已拒绝'}"
+    return ""
+
+
+def _derive_notifications(events_iter, viewer_user_id) -> list[dict]:
+    """从事件派生当前用户的通知（按项目 owner 隔离）。
+
+    项目归属 = project.created 事件的 user_id；只收 viewer 拥有的项目里
+    的状态变化/复核/审批事件。返回按 ts 倒序、最近 20 条。
+    """
+    owner_of: dict[str, str] = {}     # project_id → owner user_id
+    for e in events_iter:
+        if e["event_type"] == events.EventType.PROJECT_CREATED.value \
+                and e.get("user_id"):
+            owner_of[e["project_id"]] = e["user_id"]
+    out = []
+    for e in events_iter:
+        if e["event_type"] not in _NOTIFY_EVENTS:
+            continue
+        pid = e.get("project_id")
+        if viewer_user_id is not None and owner_of.get(pid) != viewer_user_id:
+            continue
+        out.append({
+            "event_type": e["event_type"],
+            "project_id": pid,
+            "task_id": e.get("task_id"),
+            "summary": _notify_summary(e),
+            "ts": e.get("created_at_ts", 0),
+        })
+    out.sort(key=lambda n: n["ts"], reverse=True)
+    return out[:20]
+
+
+@app.get("/notifications")
+def get_notifications(auth: dict = Depends(require_auth)):
+    """当前用户的通知（事件派生，按项目 owner 隔离）。"""
+    require_level("read_project", auth["level"])
+    return {"notifications": _derive_notifications(log.replay(), auth.get("user_id"))}
+
+
 # ---------- 项目 ----------
 @app.post("/projects")
 def create_project(title: str, goal: str, auth: dict = Depends(require_auth)):

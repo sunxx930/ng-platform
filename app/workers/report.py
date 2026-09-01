@@ -1,4 +1,8 @@
-"""ReportWorker —— 状态/结论变化主动推送责任人/复核人/用户（骨架记事件+写通知队列）。"""
+"""ReportWorker —— 状态/结论变化主动推送责任人/复核人/用户。
+
+通知 P1-2（2026-09-01）：前端通知改为事件派生（GET /notifications，按项目 owner 隔离），
+本 worker 的 JSONL 队列保留为历史兼容（不破坏 worker 启动），docstring 更新说明。
+"""
 from __future__ import annotations
 
 import json

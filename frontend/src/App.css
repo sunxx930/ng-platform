@@ -217,3 +217,17 @@ select.advance { background: var(--bg-soft); border: 1px solid var(--line); colo
 .auth-switch { margin-top: 18px; text-align: center; font-size: 13px; color: var(--muted); }
 button.link { background: none; border: 0; color: var(--accent-2); padding: 0; font: inherit; cursor: pointer; text-decoration: underline; }
 button.link:hover { transform: none; color: var(--accent); }
+
+/* 通知铃铛 + 下拉（P1-2，2026-09-01） */
+.notif-wrap { position: relative; }
+.notif-btn { position: relative; padding: 8px 12px; }
+.notif-dot { position: absolute; top: -6px; right: -6px; background: var(--danger); color: #fff;
+  font-size: 10px; min-width: 16px; height: 16px; border-radius: 8px; display: flex; align-items: center; justify-content: center; padding: 0 4px; }
+.notif-panel { position: absolute; right: 0; top: 42px; width: 320px; max-height: 420px; overflow-y: auto;
+  background: var(--panel-solid); border: 1px solid var(--line-2); border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.55); z-index: 40; padding: 8px; }
+.notif-item { padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background .12s; }
+.notif-item:hover { background: rgba(109,124,255,.1); }
+.notif-evt { font-weight: 600; font-size: 13px; }
+.notif-sum { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.notif-time { color: var(--dim); font-size: 11px; margin-top: 2px; }

@@ -142,6 +142,8 @@ function App() {
   const [fb, setFb] = useState({ content: '', contact: '', rating: null })
   const [toast, setToast] = useState('')
   const [confirmDel, setConfirmDel] = useState(null)
+  const [notifs, setNotifs] = useState([])
+  const [showNotifs, setShowNotifs] = useState(false)
   const canL3 = (session?.level || 0) >= 3
   const authed = !!session?.token
 
@@ -153,6 +155,9 @@ function App() {
 
   function loadProjects() {
     api('/projects', token).then((d) => { setProjects(d.projects || []); setError('') }).catch((e) => setError(errMsg(e)))
+  }
+  function refreshNotifs() {
+    api('/notifications', token).then((d) => setNotifs(d.notifications || [])).catch(() => {})
   }
   useEffect(() => {
     if (!authed) return
@@ -172,6 +177,10 @@ function App() {
   useEffect(() => { if (authed) api('/agents/llm-config', token).then(setLlmCurrent).catch(() => {}) }, [authed, token])
   useEffect(() => { if (authed) api('/agents/providers', token).then((d) => setProviders(d.providers || [])).catch(() => {}) }, [authed, token])
   useEffect(() => { if (authed) api('/usage', token).then(setUsage).catch(() => {}) }, [authed, token])
+  useEffect(() => {
+    if (!authed) return
+    api('/notifications', token).then((d) => setNotifs(d.notifications || [])).catch(() => {})
+  }, [authed, token])
 
   const fmtTokens = (n) => n >= 1000000 ? `${(n / 1000000).toFixed(2)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
   const usedTokens = usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : 0
@@ -287,7 +296,24 @@ function App() {
         <div className="toolbar">
           <span className="who">👤 {session.username}</span>
           <span className={`level-badge l${session.level}`}>L{session.level}</span>
-          <button onClick={loadProjects}>刷新</button>
+          <div className="notif-wrap">
+            <button className="notif-btn" data-testid="notif-bell"
+                    onClick={() => { setShowNotifs(!showNotifs); refreshNotifs() }}
+                    title="通知">🔔{notifs.length > 0 && <span className="notif-dot">{notifs.length}</span>}</button>
+            {showNotifs && (
+              <div className="notif-panel" data-testid="notif-panel">
+                {notifs.length === 0 ? <div className="muted">暂无通知</div> : notifs.map((n, i) => (
+                  <div className="notif-item" key={i}
+                       onClick={() => { if (n.project_id) loadDetail(n.project_id); setShowNotifs(false) }}>
+                    <div className="notif-evt">{EVENT_LABEL[n.event_type] || n.event_type}</div>
+                    {n.summary && <div className="notif-sum">{n.summary}</div>}
+                    <div className="notif-time">{new Date((n.ts || 0) * 1000).toLocaleTimeString()}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <button onClick={() => { loadProjects(); refreshNotifs() }}>刷新</button>
           <button className="primary" onClick={() => setShowFb(true)}>反馈</button>
           <button data-testid="logout" onClick={logout}>退出</button>
         </div>
