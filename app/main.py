@@ -371,6 +371,16 @@ def pause_project(pid: str, auth: dict = Depends(require_auth)):
 
 @app.get("/projects/{pid}/audit")
 def audit(pid: str, task_id: Optional[str] = Query(default=None), auth: dict = Depends(require_auth)):
+    """审计回放。项目不存在 → 404（与 list_tasks 一致，复核 2026-09-02 顺手项）。"""
+    require_level("read_project", auth["level"])
+    if _db_mode():
+        if not log.projector.project_exists(pid):
+            raise HTTPException(404, "project not found")
+    else:
+        evs = log.replay(project_id=pid)
+        if not any(e["event_type"] == events.EventType.PROJECT_CREATED.value
+                   for e in evs):
+            raise HTTPException(404, "project not found")
     return {"events": log.replay(project_id=pid, task_id=task_id)}
 
 
