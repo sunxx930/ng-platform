@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NG AI Platform —— 把目标交给平台，剩下它来干</title>
+  <style>
+    :root {
+      --bg: #070a12; --panel: #141a28; --text: #eef0f6;
+      --muted: #98a1b5; --accent: #6d7cff; --accent2: #4facfe;
+      --grad: linear-gradient(135deg, #6d7cff, #4facfe);
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg); color: var(--text);
+      font: 16px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      background-image:
+        radial-gradient(ellipse 60% 40% at 50% -10%, rgba(109,124,255,.12), transparent),
+        radial-gradient(ellipse 40% 30% at 90% 10%, rgba(79,172,254,.06), transparent);
+    }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 30px 24px; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; }
+    .logo { display: flex; align-items: center; gap: 12px; }
+    .logo-icon { width: 40px; height: 40px; border-radius: 11px; background: var(--grad);
+      display: flex; align-items: center; justify-content: center; font-size: 22px;
+      box-shadow: 0 4px 18px rgba(109,124,255,.4); }
+    .logo-name { font-size: 18px; font-weight: 700; }
+    .logo-name .accent { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    nav a { color: var(--muted); text-decoration: none; margin-left: 22px; font-size: 14px; }
+    nav a:hover { color: var(--text); }
+    .hero { text-align: center; padding: 90px 20px 60px; }
+    .hero h1 { font-size: 44px; font-weight: 800; line-height: 1.2; margin-bottom: 20px; }
+    .hero h1 .grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .hero p { color: var(--muted); font-size: 18px; max-width: 640px; margin: 0 auto 40px; }
+    .btn { display: inline-block; background: var(--grad); color: #fff; text-decoration: none;
+      padding: 14px 32px; border-radius: 12px; font-size: 17px; font-weight: 600;
+      box-shadow: 0 6px 24px rgba(109,124,255,.35); margin: 6px 8px; }
+    .btn.ghost { background: transparent; border: 1px solid rgba(255,255,255,.2); box-shadow: none; }
+    .btn:hover { filter: brightness(1.1); }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; padding: 40px 0; }
+    .card { background: var(--panel); border: 1px solid rgba(255,255,255,.07); border-radius: var(--radius);
+      padding: 26px; }
+    .card h3 { font-size: 18px; margin-bottom: 10px; }
+    .card p { color: var(--muted); font-size: 14px; }
+    .card .ic { font-size: 26px; margin-bottom: 12px; }
+    .compare { padding: 40px 0; }
+    .compare table { width: 100%; border-collapse: collapse; background: var(--panel);
+      border-radius: var(--radius); overflow: hidden; font-size: 14px; }
+    .compare th, .compare td { padding: 14px 18px; text-align: left; border-bottom: 1px solid rgba(255,255,255,.06); }
+    .compare th { background: rgba(109,124,255,.12); }
+    .compare td.yes { color: #34d399; }
+    .compare td.no { color: #f87171; }
+    .cta { text-align: center; padding: 50px 0 30px; }
+    footer { text-align: center; color: #626c82; font-size: 13px; padding: 30px 0 40px; }
+    @media (max-width: 700px) { .hero h1 { font-size: 30px; } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🐳</div>
+      <div class="logo-name"><span class="accent">NG</span> AI Platform</div>
+    </div>
+    <nav>
+      <a href="#features">能力</a>
+      <a href="#why">为什么</a>
+      <a href="#download">下载</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <h1>把目标交给平台<br><span class="grad">剩下它来干</span></h1>
+    <p>NG AI Platform 是一个面向长期项目的 Agent 团队操作系统——自动拆分任务、匹配专业 Agent、建立责任与复核链、主动推进到完成，并记录每一步决策与证据。</p>
+    <a class="btn" href="#download">🚀 下载使用</a>
+    <a class="btn ghost" href="#why">了解更多</a>
+  </section>
+
+  <section class="cards" id="features">
+    <div class="card"><div class="ic">🛠️</div><h3>自动组队</h3><p>给一个目标，平台自动匹配责任、复核、审批 Agent，无需自己找人。</p></div>
+    <div class="card"><div class="ic">⏰</div><h3>主动推进</h3><p>任务自动开工、到期自报、阻塞升级，不用你催。</p></div>
+    <div class="card"><div class="ic">🧠</div><h3>项目记忆</h3><p>决策、证据、文件、版本结构化留存，长期项目不遗忘。</p></div>
+    <div class="card"><div class="ic">🔒</div><h3>责任与审计</h3><p>每一步可回放可追溯，关键动作人工审批。</p></div>
+    <div class="card"><div class="ic">🔄</div><h3>可靠交接</h3><p>产出自动交给下一责任人，携带目标、证据与风险。</p></div>
+    <div class="card"><div class="ic">📦</div><h3>本地化部署</h3><p>数据自托管、自己掌控，支持 Mac / Windows 安装包。</p></div>
+  </section>
+
+  <section class="compare" id="why">
+    <div class="card">
+      <h2 style="margin-bottom:16px">与直接用 AI 算力的不同</h2>
+      <table>
+        <tr><th>维度</th><th>直接调用 AI（ChatGPT / API）</th><th>NG AI Platform</th></tr>
+        <tr><td>长期项目</td><td class="no">会遗忘，要你反复喂上下文</td><td class="yes">记忆结构化，决策证据留存</td></tr>
+        <tr><td>团队分工</td><td class="no">一个 AI 干所有事</td><td class="yes">自动组队：责任 / 复核 / 审批</td></tr>
+        <tr><td>主动性</td><td class="no">你问它才动</td><td class="yes">自动开工、到期自报、阻塞升级</td></tr>
+        <tr><td>交接</td><td class="no">你手动搬运</td><td class="yes">产出自动交接下一责任人</td></tr>
+        <tr><td>审计</td><td class="no">没有记录</td><td class="yes">每一步可回放可追溯</td></tr>
+        <tr><td>权限</td><td class="no">AI 想干什么干什么</td><td class="yes">分级授权 + 人工审批门</td></tr>
+      </table>
+      <p style="color:var(--muted);font-size:14px;margin-top:14px">一句话：AI 算力是"干活的工具"，NG 是"让工具组成可靠团队、长期替你管项目的操作系统"。</p>
+    </div>
+  </section>
+
+  <section class="cta" id="download">
+    <h2 style="margin-bottom:14px">下载使用</h2>
+    <p style="color:var(--muted);margin-bottom:24px">Mac 版 · Windows 版 · 双击即用，无需配置</p>
+    <a class="btn" href="#" onclick="alert('Mac 版安装包即将上线，敬请期待');return false;">🍎 Mac 版</a>
+    <a class="btn" href="#" onclick="alert('Windows 版安装包即将上线，敬请期待');return false;">🪟 Windows 版</a>
+  </section>
+
+  <footer>© 2026 NG AI Platform · 本地化 · 数据自己掌控</footer>
+</div>
+</body>
+</html>
