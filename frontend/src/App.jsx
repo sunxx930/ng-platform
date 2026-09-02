@@ -122,12 +122,16 @@ function AuthScreen({ onAuth }) {
 
 function App() {
   const [session, setSession] = useState(() => {
-    // 测试直通：URL 带 ?demo=<token> → 免注册直接以 demo 身份进入（测试 agent 用）
+    // 测试直通：URL 带 ?demo=<token> → 免注册直接以 demo 身份进入（测试 agent 用）。
+    // token 形如 demo-<名字>-xxx → 显示名取名字段（如 demo-lobster-x → "lobster"）
     try {
       const dp = new URLSearchParams(window.location.search).get('demo')
       if (dp) {
-        localStorage.setItem('ng_session', JSON.stringify({ token: dp, username: 'demo-admin', level: 3 }))
-        return { token: dp, username: 'demo-admin', level: 3 }
+        const name = dp.startsWith('demo-')
+          ? (dp.split('-')[1] || 'demo').replace(/^./, (c) => c.toUpperCase())
+          : 'demo'
+        localStorage.setItem('ng_session', JSON.stringify({ token: dp, username: name, level: 3 }))
+        return { token: dp, username: name, level: 3 }
       }
       return JSON.parse(localStorage.getItem('ng_session'))
     } catch { return null }
