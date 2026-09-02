@@ -16,6 +16,7 @@ class TaskDraft:
     deliverables: list[str] = field(default_factory=list)
     owner_hint: str = ""       # 建议责任 agent
     reviewer_hint: str = ""    # 建议复核 agent
+    depends_on: list[str] = field(default_factory=list)  # 依赖的任务标题（串联）；空=并联
 
 
 @dataclass
@@ -29,8 +30,13 @@ SYSTEM_PROMPT = (
     '严格输出 JSON：{"summary": "一句话概括", '
     '"tasks": [{"title": "任务标题", "description": "做什么/怎么做", '
     '"deliverables": ["交付物"], "owner_hint": "建议责任人(未知给空)", '
-    '"reviewer_hint": "建议复核人(未知给空)"}]}\n'
-    "任务数 1-5 个，拆到可执行粒度，不要重叠。"
+    '"reviewer_hint": "建议复核人(未知给空)", '
+    '"depends_on": ["被依赖任务的title(有则填，无则空数组)"]}]}\n'
+    "任务数 1-5 个，拆到可执行粒度，不要重叠。\n"
+    "【串联/并联判断】分析任务之间的先后依赖：若某任务需要另一个任务先完成/先产出才能做\n"
+    "（如 A 的产出是 B 的输入），则在 B 的 depends_on 里填 A 的 title（串联，A 完成后 B 才开工）；\n"
+    "互不依赖、可同时进行的任务 depends_on 填空数组（并联，可一起开工）。\n"
+    "依赖只指向同一批任务里的 title，不要引用不存在的任务；绝大多数项目是并联为主的。"
 )
 
 
@@ -50,5 +56,6 @@ class RequirementParser:
             deliverables=list(t.get("deliverables") or []),
             owner_hint=t.get("owner_hint", "") or "",
             reviewer_hint=t.get("reviewer_hint", "") or "",
+            depends_on=list(t.get("depends_on") or []),
         ) for t in data.get("tasks", []) if t.get("title")]
         return GoalParse(summary=data.get("summary", "") or goal[:60], tasks=tasks)

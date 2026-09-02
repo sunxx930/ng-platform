@@ -24,6 +24,13 @@ class OptimisticLockConflict(Exception):
     """任务状态并发冲突：事件插入与版本自增同事务，冲突回滚（事件也不落库）。"""
 
 
+def _deps_list(deps) -> list[str]:
+    """depends_on UUID[] 读回 → 字符串列表。None → []。"""
+    if not deps:
+        return []
+    return [str(d) for d in deps]
+
+
 class Projector:
     """投影器：把事件折叠到读模型表。纯 SQL，风格对齐 event_log。"""
 
@@ -87,15 +94,17 @@ class Projector:
         deliverables = json.dumps(
             {"deliverables": list(event["payload"].get("deliverables") or [])},
             ensure_ascii=False)
+        deps = list(event["payload"].get("depends_on") or [])
         conn.execute(text(
-            """INSERT INTO tasks (id, project_id, title, description, status, deadline_ts, evidence)
-               VALUES (:id, :pid, :title, :desc, 'todo', :dl, :ev)
+            """INSERT INTO tasks (id, project_id, title, description, status, deadline_ts, evidence, depends_on)
+               VALUES (:id, :pid, :title, :desc, 'todo', :dl, :ev, CAST(:deps AS uuid[]))
                ON CONFLICT (id) DO UPDATE SET title=:title, description=:desc,
                  deadline_ts=COALESCE(:dl, tasks.deadline_ts)"""),
             {"id": event["task_id"], "pid": pid,
              "title": event["payload"].get("title", ""),
              "desc": event["payload"].get("description"),
-             "dl": deadline_ts, "ev": deliverables})
+             "dl": deadline_ts, "ev": deliverables,
+             "deps": "{" + ",".join(deps) + "}" if deps else None})
 
     def _task_state_changed(self, conn, event, expected_version):
         tid = event.get("task_id")
@@ -179,19 +188,20 @@ class Projector:
         with self._engine.connect() as conn:
             rows = conn.execute(text(
                 """SELECT id, title, status, owner_agent_name, reviewer_agent_name,
-                          has_deliverable
+                          has_deliverable, depends_on
                    FROM tasks WHERE project_id=:pid ORDER BY created_at"""),
                 {"pid": project_id}).mappings().all()
         return [{"task_id": str(r["id"]), "title": r["title"],
                  "status": r["status"], "owner": r["owner_agent_name"],
                  "reviewer": r["reviewer_agent_name"],
-                 "has_deliverable": r["has_deliverable"]} for r in rows]
+                 "has_deliverable": r["has_deliverable"],
+                 "depends_on": _deps_list(r["depends_on"])} for r in rows]
 
     def get_task_context(self, task_id: str) -> dict | None:
         with self._engine.connect() as conn:
             r = conn.execute(text(
                 """SELECT id, title, description, status, owner_agent_name,
-                          reviewer_agent_name, deadline_ts, evidence
+                          reviewer_agent_name, deadline_ts, evidence, depends_on
                    FROM tasks WHERE id=:tid"""),
                 {"tid": task_id}).mappings().first()
         if r is None:
@@ -205,7 +215,8 @@ class Projector:
                 "description": r["description"],
                 "deliverables": ev.get("deliverables", []),
                 "owner": r["owner_agent_name"], "reviewer": r["reviewer_agent_name"],
-                "status": r["status"], "deadline_ts": r["deadline_ts"]}
+                "status": r["status"], "deadline_ts": r["deadline_ts"],
+                "depends_on": _deps_list(r["depends_on"])}
 
     def get_task_row(self, task_id: str) -> dict | None:
         """PATCH 乐观锁读：status/project_id/expected_version。"""

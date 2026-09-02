@@ -177,10 +177,12 @@ def _derive_task_list(events_iter, project_id) -> list[dict]:
         t = tasks.setdefault(tid, {"task_id": tid, "title": "",
                                    "status": TaskStatus.TODO.value,
                                    "owner": None, "reviewer": None,
-                                   "has_deliverable": False})
+                                   "has_deliverable": False,
+                                   "depends_on": []})
         p = e["payload"]
         if e["event_type"] == events.EventType.TASK_CREATED.value:
             t["title"] = p.get("title", "")
+            t["depends_on"] = list(p.get("depends_on") or [])
         elif e["event_type"] == events.EventType.AGENT_ASSIGNED.value:
             t[p.get("role", "owner")] = p.get("agent")
         elif e["event_type"] == events.EventType.TASK_STATE_CHANGED.value:
@@ -211,13 +213,15 @@ def _derive_task_context(events_iter, task_id) -> dict:
     """replay 纯函数：任务上下文，形状与 Projector.get_task_context 一致。"""
     ctx: dict = {"task_id": task_id, "title": "", "description": "",
                  "deliverables": [], "owner": None, "reviewer": None,
-                 "status": TaskStatus.TODO.value, "deadline_ts": None}
+                 "status": TaskStatus.TODO.value, "deadline_ts": None,
+                 "depends_on": []}
     for e in events_iter:
         p = e["payload"]
         if e["event_type"] == events.EventType.TASK_CREATED.value:
             ctx.update(title=p.get("title", ""), description=p.get("description", ""),
                        deliverables=list(p.get("deliverables") or []),
-                       deadline_ts=p.get("deadline_ts"))
+                       deadline_ts=p.get("deadline_ts"),
+                       depends_on=list(p.get("depends_on") or []))
         elif e["event_type"] == events.EventType.AGENT_ASSIGNED.value:
             role = p.get("role", "owner")
             ctx[role] = p.get("agent") or ctx.get(role)
@@ -396,13 +400,20 @@ def _parse_and_create(pid: str, goal: str) -> list[dict]:
         project_id=pid,
         idempotency_key=f"goalparse:{pid}:" + hashlib.sha256(
             goal.encode()).hexdigest()[:10]))
+    # 先为全部任务生成 task_id + title→tid 映射（依赖引用标题，需先有 tid）
+    drafts = list(parsed.tasks)
+    tid_of_title = {draft.title: str(uuid.uuid4()) for draft in drafts}
     created = []
-    for draft in parsed.tasks:
-        tid = str(uuid.uuid4())
+    for draft in drafts:
+        tid = tid_of_title[draft.title]
+        # 依赖解析：LLM 输出的 depends_on 是标题 → 映射成本任务 tid；找不到的忽略（容错）
+        depends = [tid_of_title[d] for d in draft.depends_on
+                   if d in tid_of_title and tid_of_title[d] != tid]
         log.append(events.new_event(
             events.EventType.TASK_CREATED, "system",
             {"title": draft.title, "description": draft.description,
-             "deliverables": draft.deliverables, "status": TaskStatus.TODO.value},
+             "deliverables": draft.deliverables, "status": TaskStatus.TODO.value,
+             "depends_on": depends},
             project_id=pid, task_id=tid))
         team = match_team(draft, agents)
         if team["owner"]:
@@ -414,7 +425,8 @@ def _parse_and_create(pid: str, goal: str) -> list[dict]:
                 events.EventType.AGENT_ASSIGNED, "system",
                 {"agent": team["reviewer"], "role": "reviewer"}, project_id=pid, task_id=tid))
         created.append({"task_id": tid, "title": draft.title,
-                        "owner": team["owner"], "reviewer": team["reviewer"]})
+                        "owner": team["owner"], "reviewer": team["reviewer"],
+                        "depends_on": depends})
     return created
 
 
@@ -700,12 +712,24 @@ def instantiate_template(tid: str, auth: dict = Depends(require_auth)):
 @app.post("/projects/{pid}/tasks")
 def create_task(pid: str, title: str, description: str = "",
                 owner_agent: Optional[str] = None, deadline_ts: Optional[float] = None,
+                depends_on: Optional[str] = None,   # 依赖的任务id/title（逗号分隔，可选）
                 auth: dict = Depends(require_auth)):
     tid = str(uuid.uuid4())
+    deps = []
+    if depends_on:
+        # 同项目内按 task_id 或 title 解析依赖
+        for dep in depends_on.split(","):
+            dep = dep.strip()
+            if not dep:
+                continue
+            if dep in ("", tid):
+                continue
+            deps.append(dep)   # 任务id直接存；title 由调用方确保同批已建
     log.append(events.new_event(
         events.EventType.TASK_CREATED, "system",
         {"title": title, "description": description,
-         "status": TaskStatus.TODO.value, "deadline_ts": deadline_ts},
+         "status": TaskStatus.TODO.value, "deadline_ts": deadline_ts,
+         "depends_on": deps},
         project_id=pid, task_id=tid))
     if owner_agent:
         log.append(events.new_event(
