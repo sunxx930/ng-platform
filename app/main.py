@@ -1194,6 +1194,15 @@ def agent_transfer(req: TransferIn, auth: dict = Depends(require_auth)):
     缺失时平台其余功能（解析/执行/复核/审计）照常运行。
     """
     require_level("send_handover", auth["level"])
+    # 汇总v1.2 ⑥（2026-09-03）：任务级转移去重——防重复转移单。
+    # 同任务已转给【不同 agent】再转 → 409（需 resend）；同 agent 幂等走 openclaw dedup。
+    prior = next((e for e in log.replay(task_id=req.task_id)
+                  if e["event_type"] == events.EventType.AGENT_TRANSFERRED.value), None)
+    if prior and prior["payload"].get("agent_id") != req.agent_id \
+            and not (req.payload or {}).get("resend"):
+        raise HTTPException(
+            409, f"任务 {req.task_id} 已转给 {prior['payload'].get('agent_id')}，"
+                 f"换 agent 重转需带 payload.resend=true")
     try:
         from app.adapters import openclaw
     except Exception as e:      # noqa: BLE001
