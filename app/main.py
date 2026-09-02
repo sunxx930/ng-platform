@@ -784,6 +784,10 @@ def change_state(tid: str, to: TaskStatus, actor: str = "system",
             project_id=project_id, task_id=tid,
             idempotency_key=idempotency_key),
             expected_version=cur_v)
+        # 龙虾反馈（2026-09-02）：手动推进到 pending_approval 时自动建审批请求
+        # （否则 pending_approval 状态无对应 approval.requested → 审批队列空、卡死）
+        if new == TaskStatus.PENDING_APPROVAL:
+            _ensure_approval_requested(tid, project_id)
         return {"task_id": tid, "status": new.value,
                 "expected_version": (cur_v or 0) + 1}
     # JSONL 路径：replay 推导，无锁
@@ -806,6 +810,9 @@ def change_state(tid: str, to: TaskStatus, actor: str = "system",
         {"from": state.value, "to": new.value},
         project_id=project_id, task_id=tid,       # F3: 状态事件带 project_id
         idempotency_key=idempotency_key))
+    # 龙虾反馈（2026-09-02）：手动推进到 pending_approval 自动建审批请求
+    if new == TaskStatus.PENDING_APPROVAL:
+        _ensure_approval_requested(tid, project_id)
     return {"task_id": tid, "status": new.value}
 
 
@@ -986,6 +993,21 @@ def _advance_to_pending_approval(tid: str, pid: str | None):
              "trigger": "approval.requested"},
             project_id=pid, task_id=tid,
             idempotency_key=f"to_pending_approval:{tid}"))
+
+
+def _ensure_approval_requested(tid: str, pid: str | None):
+    """如任务尚无审批请求则自动建一个（scope=flow_change）。龙虾反馈 2026-09-02：
+    手动推进到 pending_approval 后若无 approval.requested，审批队列空、任务卡死。"""
+    existing = any(e["event_type"] == events.EventType.APPROVAL_REQUESTED.value
+                   for e in log.replay(task_id=tid))
+    if existing:
+        return
+    aid = str(uuid.uuid4())
+    log.append(events.new_event(
+        events.EventType.APPROVAL_REQUESTED, "system",
+        {"approval_id": aid, "scope": "flow_change"},
+        project_id=pid, task_id=tid,
+        idempotency_key=f"approval:req:{tid}:auto"))
 
 
 @app.post("/approvals/{aid}/decision")
