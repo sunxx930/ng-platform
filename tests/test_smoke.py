@@ -500,6 +500,40 @@ def test_message_parse_llm_unconfigured(client, monkeypatch):
     assert "算力未配置" in r.json()["detail"]
 
 
+def test_parse_retry_succeeds_on_second_attempt(client, monkeypatch):
+    """龙虾汇总#2：LLM 解析第一次失败第二次成功 → 重试生效不抛错。"""
+    calls = {"n": 0}
+    class _FlakyLLM:
+        def usage(self): return []
+        def parse_json(self, system, user, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("LLM 临时故障")
+            return {"summary": "ok", "tasks": [
+                {"title": "T", "description": "d"}]}
+    monkeypatch.setattr("app.main.LLMClient", lambda: _FlakyLLM())
+    pid = _project(client)
+    r = client.post(f"/projects/{pid}/messages", headers=H1,
+                    params={"body": "做点事", "parse": "true"})
+    assert r.status_code == 200, r.json()
+    assert calls["n"] == 2   # 重试了一次
+    assert len(r.json()["created_tasks"]) == 1
+
+
+def test_message_parse_failed_event_recorded(client, monkeypatch):
+    """龙虾汇总#2：解析失败写 goal.parse_failed 事件（审计可查，不静默）。"""
+    from app.services.llm import LLMConfigError
+
+    def _boom():
+        raise LLMConfigError("算力未配置")
+    monkeypatch.setattr("app.main.LLMClient", _boom)
+    pid = _project(client)
+    client.post(f"/projects/{pid}/messages", headers=H1,
+                params={"body": "x", "parse": "true"})
+    audit = client.get(f"/projects/{pid}/audit", headers=H1).json()["events"]
+    assert any(e["event_type"] == "goal.parse_failed" for e in audit)
+
+
 def test_builtin_agent_executes(tmp_path):
     """NG 自研 agent：用算力产出交付物并落盘（mock LLM）。"""
     from app.agents.builtin import BuiltinAgent, TaskContext

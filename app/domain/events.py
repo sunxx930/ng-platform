@@ -24,6 +24,7 @@ class EventType(str, Enum):
     AGENT_TRANSFERRED = "agent.transferred"   # openclaw 转移
     AGENT_REGISTERED = "agent.registered"     # agent 注册中心（事件溯源，可审计）
     GOAL_PARSED = "goal.parsed"               # 需求解析：用户目标 → 任务草案
+    GOAL_PARSE_FAILED = "goal.parse_failed"   # 需求解析失败（龙虾汇总#2：失败要可审计）
     FEEDBACK_SUBMITTED = "feedback.submitted" # 试用者反馈
     USAGE_RECORDED = "usage.recorded"         # LLM 用量（token）记录
     USER_REGISTERED = "user.registered"       # 用户注册（多用户，2026-09-01）

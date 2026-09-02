@@ -44,12 +44,27 @@ class RequirementParser:
     def __init__(self, llm: LLMClient):
         self._llm = llm
 
-    def parse_goal(self, goal: str, agent_names: list[str] | None = None) -> GoalParse:
-        """解析目标 → 任务草案。agent_names 供 LLM 参考（能力匹配提示）。"""
+    def parse_goal(self, goal: str, agent_names: list[str] | None = None,
+                   retries: int = 2) -> GoalParse:
+        """解析目标 → 任务草案。agent_names 供 LLM 参考（能力匹配提示）。
+
+        龙虾汇总#2（2026-09-03）：LLM 解析偶发失败，重试 retries 次降低静默失败率。
+        """
         user = f"项目目标: {goal}"
         if agent_names:
             user += f"\n可用 agent 名单: {', '.join(agent_names)}"
-        data = self._llm.parse_json(SYSTEM_PROMPT, user)
+        data = None
+        last_exc = None
+        for attempt in range(retries + 1):
+            try:
+                data = self._llm.parse_json(SYSTEM_PROMPT, user)
+                break
+            except Exception as e:      # noqa: BLE001
+                last_exc = e
+                if attempt == retries:
+                    raise
+        if data is None:
+            raise RuntimeError(f"需求解析多次失败: {last_exc}")
         tasks = [TaskDraft(
             title=t.get("title", ""),
             description=t.get("description", ""),

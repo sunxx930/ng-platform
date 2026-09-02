@@ -444,6 +444,12 @@ def post_message(pid: str, body: str, parse: bool = False,
         try:
             created = _parse_and_create(pid, body)
         except (LLMConfigError, ValueError, RuntimeError) as ex:
+            # 龙虾汇总#2（2026-09-03）：解析失败写 parse_failed 事件（审计可查，不静默）
+            log.append(events.new_event(
+                events.EventType.GOAL_PARSE_FAILED, "system",
+                {"error": str(ex)[:300], "body_len": len(body)},
+                project_id=pid, idempotency_key=f"parsefail:{pid}:" + hashlib.sha256(
+                    body.encode()).hexdigest()[:10]))
             raise HTTPException(503, f"需求解析失败（算力未配置或模型输出异常）: {ex}")
     return {"message_id": mid, "created_tasks": created}
 
