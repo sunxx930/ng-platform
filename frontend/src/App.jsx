@@ -137,6 +137,7 @@ function App() {
     } catch { return null }
   })
   const token = session?.token || ''
+  const isDemo = typeof token === 'string' && token.startsWith('demo-')
   const [projects, setProjects] = useState([])
   const [selected, setSelected] = useState(null)
   const [detail, setDetail] = useState(null)
@@ -452,6 +453,13 @@ function App() {
                 <div className="welcome-icon">🐳</div>
                 <div className="welcome-title">👋 欢迎，{session.username} —— 这是你的工作台</div>
                 <div className="welcome-sub">在上面「把目标交给平台」，它会自动拆任务、派 agent、产出并复核；每个项目展开就是任务看板 + 审批队列 + 完整审计流</div>
+                {isDemo && (
+                  <div className="demo-note" data-testid="demo-note">
+                    <strong>试用须知</strong>：① 提需求后平台自动拆任务并行开工（~30s 自动产出→待复核）；
+                    ② <strong>复核是人工门</strong>——产出到「待复核」后需在待办中心点 通过/需修改/拒绝，不会自动通过；
+                    ③ 被判「需修改」的任务会退回进行中，改好后重新提交即可再次复核；④ 数值任务请核对产出引用的输入数据。
+                  </div>
+                )}
                 <button className="primary big" onClick={() => document.querySelector('.goal-title')?.focus()}>🚀 提第一个需求</button>
               </div>
             ) : (
