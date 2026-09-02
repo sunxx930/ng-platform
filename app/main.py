@@ -870,9 +870,12 @@ def submit_deliverable(tid: str, file_ref: str,
                 state = TaskStatus(e["payload"]["to"])
     idem = f"deliverable:{tid}:{file_ref}:" + hashlib.sha256(
         f"{verdict}|{summary}".encode()).hexdigest()[:10]
+    # 产出证据（龙虾反馈阻塞#4）：验证文件 + 存内容长度/哈希/预览
+    evidence = _deliverable_evidence(file_ref)
     log.append(events.new_event(
         events.EventType.DELIVERABLE_SUBMITTED, f"agent:{agent}",
-        {"file_ref": file_ref, "version": 1, "verdict": verdict, "summary": summary},
+        {"file_ref": file_ref, "version": 1, "verdict": verdict, "summary": summary,
+         **evidence},
         project_id=project_id, task_id=tid, idempotency_key=idem))
     # 闭环：Agent 提交产出 → 产出自动交接给复核人（状态机第七节）
     new_state = None
@@ -1008,6 +1011,27 @@ def _ensure_approval_requested(tid: str, pid: str | None):
         {"approval_id": aid, "scope": "flow_change"},
         project_id=pid, task_id=tid,
         idempotency_key=f"approval:req:{tid}:auto"))
+
+
+def _deliverable_evidence(file_ref: str) -> dict:
+    """产出证据（龙虾反馈阻塞#4，2026-09-02）：验证 file_ref 指向的文件是否存在，
+    存在则存内容长度/哈希/预览；不存在则标记 file_missing（不卡死流程但能看出没真文件）。"""
+    from pathlib import Path
+    p = Path(file_ref)
+    if not p.is_absolute():
+        p = Path.cwd() / p
+    if not p.exists():
+        return {"file_missing": True, "note": f"file_ref={file_ref} 未找到对应文件"}
+    try:
+        content = p.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        return {"file_missing": True, "note": f"读取失败: {e}"}
+    return {
+        "content_len": len(content),
+        "content_hash": hashlib.sha256(content.encode()).hexdigest()[:16],
+        "preview": content[:500],
+        "file_missing": False,
+    }
 
 
 @app.post("/approvals/{aid}/decision")
