@@ -53,7 +53,25 @@
     .compare td.yes { color: #34d399; }
     .compare td.no { color: #f87171; }
     .cta { text-align: center; padding: 50px 0 30px; }
+    .workflow { padding: 20px 0 30px; }
+    .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 24px; }
+    .step { background: var(--panel); border: 1px solid rgba(255,255,255,.07); border-radius: var(--radius); padding: 20px; position: relative; }
+    .step-n { position: absolute; top: -10px; left: 14px; width: 26px; height: 26px; border-radius: 50%;
+      background: var(--grad); color: #fff; display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 700; }
+    .step h3 { margin: 10px 0 6px; font-size: 16px; }
+    .step p { color: var(--muted); font-size: 13px; }
+    .example { background: var(--panel); border: 1px solid rgba(79,172,254,.2); border-radius: var(--radius); padding: 22px 26px; }
+    .ex-title { font-weight: 700; margin-bottom: 10px; }
+    .example p { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+    .example em { color: var(--text); font-style: normal; }
+    .example ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+    .example li { margin: 4px 0; }
     footer { text-align: center; color: #626c82; font-size: 13px; padding: 30px 0 40px; }
+    .foot-main { margin-bottom: 6px; color: #98a1b5; }
+    .foot-links { margin: 4px 0; }
+    .foot-links a { color: var(--accent2); text-decoration: none; }
+    .foot-links a:hover { text-decoration: underline; }
     @media (max-width: 700px) { .hero h1 { font-size: 30px; } }
   </style>
 </head>
@@ -66,6 +84,7 @@
     </div>
     <nav>
       <a href="#features">能力</a>
+      <a href="#how">怎么用</a>
       <a href="#why">为什么</a>
       <a href="#download">下载</a>
     </nav>
@@ -80,7 +99,7 @@
 
   <section class="cards" id="features">
     <div class="card"><div class="ic">🛠️</div><h3>自动组队</h3><p>给一个目标，平台自动匹配责任、复核、审批 Agent，无需自己找人。</p></div>
-    <div class="card"><div class="ic">⏰</div><h3>主动推进</h3><p>任务自动开工、到期自报、阻塞升级，不用你催。</p></div>
+    <div class="card"><div class="ic">⏰</div><h3>主动推进</h3><p>任务自动开工、到期自报、阻塞升级——在授权范围内自动推进，遇到阻塞或关键动作请求人工审批。</p></div>
     <div class="card"><div class="ic">🧠</div><h3>项目记忆</h3><p>决策、证据、文件、版本结构化留存，长期项目不遗忘。</p></div>
     <div class="card"><div class="ic">🔒</div><h3>责任与审计</h3><p>每一步可回放可追溯，关键动作人工审批。</p></div>
     <div class="card"><div class="ic">🔄</div><h3>可靠交接</h3><p>产出自动交给下一责任人，携带目标、证据与风险。</p></div>
@@ -103,6 +122,29 @@
     </div>
   </section>
 
+  <!-- 工作流程：输入目标 → 自动组队 → 执行汇报 → 人工决策 -->
+  <section class="workflow" id="how">
+    <h2 style="text-align:center;margin-bottom:8px">它是怎么工作的</h2>
+    <p style="text-align:center;color:var(--muted);margin-bottom:28px">你只做两件事：给目标、批关键决策</p>
+    <div class="steps">
+      <div class="step"><div class="step-n">1</div><h3>给目标</h3><p>用一句话描述你想完成的事，平台自动解析成可执行的任务。</p></div>
+      <div class="step"><div class="step-n">2</div><h3>自动组队</h3><p>根据能力与权限匹配专业 Agent，生成责任、复核、审批链。</p></div>
+      <div class="step"><div class="step-n">3</div><h3>执行与汇报</h3><p>Agent 自动开工、产出、交接复核；状态变化主动推送给你。</p></div>
+      <div class="step"><div class="step-n">4</div><h3>人工决策</h3><p>遇到阻塞或关键动作，平台停下来请求你批准，再继续推进。</p></div>
+    </div>
+
+    <div class="example">
+      <div class="ex-title">🎬 一个真实例子</div>
+      <p>用户输入：<em>"整理本周 BTC 交易复盘，含每日流水、失败单分析、下周计划，输出成文档。"</em></p>
+      <ul>
+        <li>平台自动拆出 5 个任务：拉取流水 / 分析失败单 / 汇总 / 复盘 / 校对排版</li>
+        <li>自动指派 ng 助理（执行）＋ 龙虾（复核），建立责任链</li>
+        <li>执行 Agent 自动产出 5 篇文档 → 自动交接复核 → 复核通过 → 归档</li>
+        <li>全过程留痕：每条任务、决策、版本、审计记录都可回放</li>
+      </ul>
+    </div>
+  </section>
+
   <section class="cta" id="download">
     <h2 style="margin-bottom:14px">下载使用</h2>
     <p style="color:var(--muted);margin-bottom:24px">Mac 版 · Windows 版 · 双击即用，无需配置</p>
@@ -110,7 +152,17 @@
     <a class="btn" href="#" onclick="alert('Windows 版安装包即将上线，敬请期待');return false;">🪟 Windows 版</a>
   </section>
 
-  <footer>© 2026 NG AI Platform · 本地化 · 数据自己掌控</footer>
+  <footer>
+    <div class="foot-main">© 2026 NG AI Platform · v0.1（MVP）</div>
+    <div class="foot-links">
+      <span>数据说明：默认本地存储，数据在你自己的设备上（Mac ~/.ng-platform · Windows C:\Users\用户名\.ng-platform），不传第三方服务器</span>
+    </div>
+    <div class="foot-links">
+      <a href="mailto:support@ng-plateform.com">联系我们</a> ·
+      <a href="#" onclick="alert('服务条款 / 隐私政策整理中，敬请期待');return false">服务条款</a> ·
+      <a href="#" onclick="alert('安装包校验信息将在正式发布版提供');return false">安装包校验</a>
+    </div>
+  </footer>
 </div>
 </body>
 </html>
