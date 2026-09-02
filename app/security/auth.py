@@ -40,8 +40,11 @@ def resolve_tokens(env: dict) -> dict[str, tuple[str, int]]:
 TOKENS = resolve_tokens(dict(os.environ))
 
 
-# 测试模式（2026-09-02）：NG_DEMO_TOKEN 注入后加入静态 token 表，供测试 agent 免注册直通
+# 测试模式（2026-09-02）：NG_DEMO_TOKEN 注入后加入静态 token 表，供测试 agent 免注册直通。
+# 2026-09-03 升级：NG_DEMO_MODE=1 时，任意 `demo-` 前缀 token 动态放行并派生独立 user_id，
+# 每个试用者用不同 token → 各自隔离（复用多用户隔离逻辑），不再共享全见。
 _DEMO_TOKEN = os.environ.get("NG_DEMO_TOKEN", "").strip()
+_DEMO_MODE = os.environ.get("NG_DEMO_MODE", "").strip().lower() in {"1", "true", "yes"}
 if _DEMO_TOKEN and _DEMO_TOKEN not in TOKENS:
     TOKENS[_DEMO_TOKEN] = ("demo-admin", 3)
 
@@ -55,15 +58,21 @@ def set_user_store(store) -> None:
     user_store = store
 
 
+def _demo_identity(token: str) -> tuple[str, int, str]:
+    """demo 模式动态 token → (user, level, user_id)。user_id 由 token 派生（确定性）。"""
+    import hashlib
+    h = hashlib.sha256(token.encode()).hexdigest()
+    uid = f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+    return "demo-" + token[:8], 3, uid
+
+
 def require_auth(authorization: str = Header(default="")):
     """FastAPI 依赖：校验 Bearer token，返回 {user, level, user_id}；失败 401。
 
     - 注册用户会话 token → UserStore 解析出 {user_id, username, level}
     - 静态 token（NG_LEVEL3/NG_LEVEL1）→ 服务器端通道，user_id=None
-
-    注：demo token（NG_DEMO_TOKEN）走静态 token 分支、user_id=None——demo 是
-    「共享试用沙盒」（试用者互看项目方便协作），不做用户隔离；真实多用户隔离
-    由注册用户会话 token 承担（各看各的）。
+    - demo 模式（NG_DEMO_MODE=1）：`demo-` 前缀 token 动态放行，派生独立 user_id
+      → 每个试用者一个 token 即一个隔离用户（各看各的），非共享全见。
     """
     token = authorization.removeprefix("Bearer ").strip()
     if not token:
@@ -73,6 +82,9 @@ def require_auth(authorization: str = Header(default="")):
         if sess is not None:
             return {"user": sess["username"], "level": sess["level"],
                     "user_id": sess["user_id"]}
+    if _DEMO_MODE and token.startswith("demo-"):
+        user, level, uid = _demo_identity(token)
+        return {"user": user, "level": level, "user_id": uid}
     if token in TOKENS:
         user, level = TOKENS[token]
         return {"user": user, "level": level, "user_id": None}
