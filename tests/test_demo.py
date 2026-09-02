@@ -60,3 +60,20 @@ def test_demo_token_not_available_without_injection(client):
     """未注入 demo token 时该 token 无效（401）——不泄漏默认 demo 凭据。"""
     r = client.get("/auth/me", headers={"Authorization": "Bearer demo-e2e-token-xyz"})
     assert r.status_code == 401
+
+
+def test_review_pass_auto_completes(client, monkeypatch):
+    """QA 试用（2026-09-03）：复核 pass 后任务自动推进 completed（不卡 in_review）。"""
+    h = {"Authorization": "Bearer l1-agent-token"}   # L1 静态 token
+    pid = client.post("/projects", headers=h,
+                      params={"title": "rev-auto", "goal": "g"}).json()["project_id"]
+    tid = client.post(f"/projects/{pid}/tasks", headers=h,
+                      params={"title": "R"}).json()["task_id"]
+    client.patch(f"/tasks/{tid}/state", headers=h, params={"to": "in_progress"})
+    client.post(f"/tasks/{tid}/deliverables", headers=h,
+                params={"file_ref": "docs/r.md", "verdict": "done"})   # → in_review
+    rid = client.post(f"/tasks/{tid}/reviews", headers=h).json()["review_id"]
+    assert client.post(f"/reviews/{rid}/decision", headers=h,
+                       params={"verdict": "pass"}).status_code == 200
+    ctx = client.get(f"/tasks/{tid}/context", headers=h).json()
+    assert ctx["status"] == "completed", f"复核 pass 应自动 completed，实际 {ctx['status']}"

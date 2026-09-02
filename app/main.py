@@ -998,7 +998,26 @@ def review_decision(rid: str, verdict: ReviewVerdict, auth: dict = Depends(requi
         {"review_id": rid, "verdict": verdict.value},
         project_id=req.get("project_id"), task_id=req.get("task_id"),
         idempotency_key=f"review:dec:{rid}"))
+    # QA 试用（2026-09-03）：复核 pass → 任务自动推进 completed（in_review→completed 合法）
+    # 否则复核通过后任务停在 in_review，与审批门链路的自动推进行为不一致。
+    if verdict == ReviewVerdict.PASS and req.get("task_id"):
+        _auto_complete_after_review_pass(req["task_id"], req.get("project_id"))
     return {"review_id": rid, "verdict": verdict.value}
+
+
+def _auto_complete_after_review_pass(tid: str, pid: str | None):
+    """复核 pass 后任务自动 completed（仅当当前状态 in_review，幂等）。"""
+    state = TaskStatus.TODO
+    for e in log.replay(task_id=tid):
+        if e["event_type"] == events.EventType.TASK_STATE_CHANGED.value:
+            state = TaskStatus(e["payload"]["to"])
+    if state == TaskStatus.IN_REVIEW:
+        log.append(events.new_event(
+            events.EventType.TASK_STATE_CHANGED, "system",
+            {"from": TaskStatus.IN_REVIEW.value, "to": TaskStatus.COMPLETED.value,
+             "trigger": "review.decided:pass"},
+            project_id=pid, task_id=tid,
+            idempotency_key=f"review_complete:{tid}"))
 
 
 @app.post("/tasks/{tid}/approvals")
