@@ -782,3 +782,31 @@ def test_auth_production_refuses_defaults():
     assert ("admin", 3) in tok.values() and ("agent", 1) in tok.values()
     # 非严格 dev：无 token 也有本地 fallback
     assert "l3-test-token" in resolve_tokens({})
+
+
+def test_review_needs_changes_returns_to_in_progress(client):
+    """汇总#3：复核 needs_changes → 任务退回 in_progress（返工通道，不卡死）。"""
+    pid = _project(client)
+    tid = _task(client, pid)
+    client.patch(f"/tasks/{tid}/state", headers=H1, params={"to": "in_progress"})
+    client.post(f"/tasks/{tid}/deliverables", headers=H1,
+                params={"file_ref": "docs/n.md", "verdict": "done"})  # → in_review
+    rid = client.post(f"/tasks/{tid}/reviews", headers=H1).json()["review_id"]
+    assert client.post(f"/reviews/{rid}/decision", headers=H3,
+                       params={"verdict": "needs_changes"}).status_code == 200
+    ctx = client.get(f"/tasks/{tid}/context", headers=H1).json()
+    assert ctx["status"] == "in_progress", f"needs_changes 应退回 in_progress，实际 {ctx['status']}"
+
+
+def test_review_reject_returns_to_in_progress(client):
+    """汇总#3：复核 reject → 任务退回 in_progress（打回重做）。"""
+    pid = _project(client)
+    tid = _task(client, pid)
+    client.patch(f"/tasks/{tid}/state", headers=H1, params={"to": "in_progress"})
+    client.post(f"/tasks/{tid}/deliverables", headers=H1,
+                params={"file_ref": "docs/rj.md", "verdict": "done"})
+    rid = client.post(f"/tasks/{tid}/reviews", headers=H1).json()["review_id"]
+    assert client.post(f"/reviews/{rid}/decision", headers=H3,
+                       params={"verdict": "reject"}).status_code == 200
+    ctx = client.get(f"/tasks/{tid}/context", headers=H1).json()
+    assert ctx["status"] == "in_progress"

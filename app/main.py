@@ -993,31 +993,53 @@ def review_decision(rid: str, verdict: ReviewVerdict, auth: dict = Depends(requi
                 and e["payload"].get("review_id") == rid), None)
     if req is None:
         raise HTTPException(404, f"review {rid} 不存在")   # 拒绝任意 ID
+    # 试用汇总#4（2026-09-03）：reviewer 身份绑定——执行者须是任务指派的 reviewer
+    # 或 L3 管理员（L3 可代审，demo/静态 L3 token 放行）；普通注册用户非 reviewer 不可审。
+    tid = req.get("task_id")
+    if tid and int(auth.get("level") or 0) < 3:
+        assigned_reviewer = None
+        for e in evs:
+            if e["event_type"] == events.EventType.AGENT_ASSIGNED.value \
+                    and e.get("task_id") == tid \
+                    and e["payload"].get("role", "owner") == "reviewer":
+                assigned_reviewer = e["payload"].get("agent")
+        if assigned_reviewer and auth["user"] != assigned_reviewer:
+            raise HTTPException(403,
+                f"复核权限不足：任务指派复核人为 {assigned_reviewer}，你不是该任务的 reviewer（或需 L3）")
     log.append(events.new_event(
         events.EventType.REVIEW_DECIDED, "reviewer",
         {"review_id": rid, "verdict": verdict.value},
         project_id=req.get("project_id"), task_id=req.get("task_id"),
         idempotency_key=f"review:dec:{rid}"))
-    # QA 试用（2026-09-03）：复核 pass → 任务自动推进 completed（in_review→completed 合法）
-    # 否则复核通过后任务停在 in_review，与审批门链路的自动推进行为不一致。
-    if verdict == ReviewVerdict.PASS and req.get("task_id"):
-        _auto_complete_after_review_pass(req["task_id"], req.get("project_id"))
+    # 试用汇总#1#3（2026-09-03）：复核决策联动任务状态，返工不卡死。
+    #   pass          → 自动 completed（交付完成）
+    #   needs_changes → 退回 in_progress（返工可修改重交）
+    #   reject        → 退回 in_progress（打回重做）
+    if req.get("task_id"):
+        _apply_review_outcome(req["task_id"], req.get("project_id"), verdict)
     return {"review_id": rid, "verdict": verdict.value}
 
 
-def _auto_complete_after_review_pass(tid: str, pid: str | None):
-    """复核 pass 后任务自动 completed（仅当当前状态 in_review，幂等）。"""
+def _apply_review_outcome(tid: str, pid: str | None, verdict: ReviewVerdict):
+    """复核结论 → 任务状态联动（仅当 in_review，幂等）。"""
     state = TaskStatus.TODO
     for e in log.replay(task_id=tid):
         if e["event_type"] == events.EventType.TASK_STATE_CHANGED.value:
             state = TaskStatus(e["payload"]["to"])
-    if state == TaskStatus.IN_REVIEW:
-        log.append(events.new_event(
-            events.EventType.TASK_STATE_CHANGED, "system",
-            {"from": TaskStatus.IN_REVIEW.value, "to": TaskStatus.COMPLETED.value,
-             "trigger": "review.decided:pass"},
-            project_id=pid, task_id=tid,
-            idempotency_key=f"review_complete:{tid}"))
+    if state != TaskStatus.IN_REVIEW:
+        return
+    if verdict == ReviewVerdict.PASS:
+        to = TaskStatus.COMPLETED
+        trigger = "review.decided:pass"
+    else:  # needs_changes / reject → 退回进行中返工
+        to = TaskStatus.IN_PROGRESS
+        trigger = "review.decided:rework"
+    log.append(events.new_event(
+        events.EventType.TASK_STATE_CHANGED, "system",
+        {"from": TaskStatus.IN_REVIEW.value, "to": to.value,
+         "trigger": trigger, "verdict": verdict.value},
+        project_id=pid, task_id=tid,
+        idempotency_key=f"review_outcome:{tid}:{verdict.value}"))
 
 
 @app.post("/tasks/{tid}/approvals")
