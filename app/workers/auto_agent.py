@@ -42,7 +42,16 @@ class AutoAgentWorker(Worker):
                 ctx["status"] = TaskStatus(p["to"])
             elif e["event_type"] == events.EventType.DELIVERABLE_SUBMITTED.value:
                 ctx["has_deliverable"] = True
-        if ctx["status"] != TaskStatus.IN_PROGRESS or ctx["has_deliverable"]:
+        if ctx["status"] != TaskStatus.IN_PROGRESS:
+            return
+        # 汇总v1.1 ③（2026-09-03）：needs_changes/reject 打回的任务要能重做——
+        # 有产出但被打回(有非pass review结论) → 允许重新执行；否则有产出则跳过
+        rework = False
+        for e in evs:
+            if e["event_type"] == events.EventType.REVIEW_DECIDED.value \
+                    and e["payload"].get("verdict") in ("needs_changes", "reject"):
+                rework = True
+        if ctx["has_deliverable"] and not rework:
             return
         if ctx["owner"] is None or not self._is_builtin(ctx["owner"]):
             return   # 只自动执行 NG 自研 builtin agent 的任务
@@ -143,10 +152,18 @@ class AutoAgentWorker(Worker):
               f"（{result['file_ref']}，{result['content_len']} 字符）", flush=True)
 
     def _ensure_review_requested(self, tid: str, project_id: str | None):
-        """如任务尚无 review.requested 则创建（幂等），reviewer 取已指派。"""
+        """如任务无【未决】review 则创建（幂等），reviewer 取已指派。
+
+        汇总v1.1 ②③（2026-09-03）：打回重修后重新交付应能二次复核——
+        仅当存在未决 review 才跳过；已决(needs_changes/reject 打回过)则建新 review。
+        """
         evs = self._log.replay(task_id=tid)
-        if any(e["event_type"] == events.EventType.REVIEW_REQUESTED.value for e in evs):
-            return
+        req_ids = {e["payload"].get("review_id") for e in evs
+                   if e["event_type"] == events.EventType.REVIEW_REQUESTED.value}
+        dec_ids = {e["payload"].get("review_id") for e in evs
+                   if e["event_type"] == events.EventType.REVIEW_DECIDED.value}
+        if req_ids - dec_ids:
+            return   # 有待决复核
         reviewer = None
         for e in evs:
             if e["event_type"] == events.EventType.AGENT_ASSIGNED.value \
@@ -157,4 +174,4 @@ class AutoAgentWorker(Worker):
             {"review_id": str(uuid.uuid4()), "trigger": "deliverable.submitted",
              "reviewer": reviewer},
             project_id=project_id, task_id=tid,
-            idempotency_key=f"review:req:{tid}"))
+            idempotency_key=f"review:req:{tid}:{uuid.uuid4().hex[:8]}"))

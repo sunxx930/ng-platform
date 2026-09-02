@@ -810,3 +810,33 @@ def test_review_reject_returns_to_in_progress(client):
                        params={"verdict": "reject"}).status_code == 200
     ctx = client.get(f"/tasks/{tid}/context", headers=H1).json()
     assert ctx["status"] == "in_progress"
+
+
+def test_rework_closed_loop_second_review(client):
+    """汇总v1.1 ②③：needs_changes 打回→重交→二次复核→pass→completed 闭环。"""
+    pid = _project(client)
+    tid = _task(client, pid)
+    client.patch(f"/tasks/{tid}/state", headers=H1, params={"to": "in_progress"})
+    # 首交 → in_review → needs_changes 打回
+    client.post(f"/tasks/{tid}/deliverables", headers=H1,
+                params={"file_ref": "docs/v1.md", "verdict": "done"})
+    rid1 = client.post(f"/tasks/{tid}/reviews", headers=H1).json()["review_id"]
+    assert client.post(f"/reviews/{rid1}/decision", headers=H3,
+                       params={"verdict": "needs_changes"}).status_code == 200
+    # 打回 in_progress
+    ctx = client.get(f"/tasks/{tid}/context", headers=H1).json()
+    assert ctx["status"] == "in_progress", f"打回应回 in_progress，实际 {ctx['status']}"
+    # 重交 v2 → 应能开新 review（二次复核）
+    client.patch(f"/tasks/{tid}/state", headers=H1, params={"to": "in_progress"})  # 已在 in_progress
+    r = client.post(f"/tasks/{tid}/deliverables", headers=H1,
+                    params={"file_ref": "docs/v2.md", "verdict": "done"})
+    assert r.status_code == 200
+    ctx2 = client.get(f"/tasks/{tid}/context", headers=H1).json()
+    assert ctx2["status"] == "in_review", f"重交应回 in_review，实际 {ctx2['status']}"
+    # 二次复核 pass → completed
+    rid2 = client.post(f"/tasks/{tid}/reviews", headers=H1).json()["review_id"]
+    assert rid2 != rid1, "二次复核应新建 review_id"
+    assert client.post(f"/reviews/{rid2}/decision", headers=H3,
+                       params={"verdict": "pass"}).status_code == 200
+    ctx3 = client.get(f"/tasks/{tid}/context", headers=H1).json()
+    assert ctx3["status"] == "completed", f"pass 应 completed，实际 {ctx3['status']}"

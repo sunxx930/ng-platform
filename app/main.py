@@ -938,16 +938,23 @@ def submit_deliverable(tid: str, file_ref: str,
             if e["event_type"] == events.EventType.AGENT_ASSIGNED.value \
                     and e["payload"].get("role", "owner") == "reviewer":
                 reviewer = e["payload"].get("agent")
-        existing_review = any(e["event_type"] == events.EventType.REVIEW_REQUESTED.value
-                              for e in evs)
-        if not existing_review:
+        # 汇总v1.1 ②③（2026-09-03）：打回重修后重新提交应能二次复核——
+        # 仅当存在【未决】review 才跳过；旧 review 已决(needs_changes/reject 打回过)则建新 review
+        pending_review = False
+        requested_ids = {e["payload"].get("review_id") for e in evs
+                         if e["event_type"] == events.EventType.REVIEW_REQUESTED.value}
+        decided_ids = {e["payload"].get("review_id") for e in evs
+                       if e["event_type"] == events.EventType.REVIEW_DECIDED.value}
+        if requested_ids - decided_ids:
+            pending_review = True
+        if not pending_review:
             rid = str(uuid.uuid4())
             log.append(events.new_event(
                 events.EventType.REVIEW_REQUESTED, f"agent:{agent}",
                 {"review_id": rid, "trigger": "deliverable.submitted",
                  "reviewer": reviewer},
                 project_id=project_id, task_id=tid,
-                idempotency_key=f"review:req:{tid}"))
+                idempotency_key=f"review:req:{tid}:{rid[:8]}"))
     return {"task_id": tid, "deliverable": file_ref,
             "status": new_state.value if new_state else state.value}
 
@@ -972,11 +979,19 @@ def request_review(tid: str, auth: dict = Depends(require_auth)):
     pid = _task_project_id(tid)
     if pid is None:
         raise HTTPException(404, "task not found")   # 对象绑定
-    # 幂等：同任务已有复核请求 → 返回同 review_id（重试不新建）
-    existing = next((e for e in log.replay(task_id=tid)
-                     if e["event_type"] == events.EventType.REVIEW_REQUESTED.value), None)
-    if existing:
-        return {"review_id": existing["payload"]["review_id"], "task_id": tid}
+    # 幂等：同任务有【未决】复核请求 → 返回同 review_id（重试不新建）
+    # 汇总v1.1 ②④（2026-09-03）：旧 review 已决(needs_changes/reject 打回过) → 建新 review，可二次复核/改判
+    evs = log.replay(task_id=tid)
+    req_ids = {e["payload"].get("review_id") for e in evs
+               if e["event_type"] == events.EventType.REVIEW_REQUESTED.value}
+    dec_ids = {e["payload"].get("review_id") for e in evs
+               if e["event_type"] == events.EventType.REVIEW_DECIDED.value}
+    if req_ids - dec_ids:
+        pending = next((e["payload"]["review_id"] for e in evs
+                        if e["event_type"] == events.EventType.REVIEW_REQUESTED.value
+                        and e["payload"].get("review_id") in (req_ids - dec_ids)), None)
+        if pending:
+            return {"review_id": pending, "task_id": tid}
     rid = str(uuid.uuid4())
     log.append(events.new_event(
         events.EventType.REVIEW_REQUESTED, "system", {"review_id": rid},
