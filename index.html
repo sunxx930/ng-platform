@@ -31,7 +31,17 @@
     nav a { color: var(--muted); text-decoration: none; margin-left: 22px; font-size: 14px; }
     nav a:hover { color: var(--text); }
     .hero { text-align: center; padding: 90px 20px 60px; }
-    .hero h1 { font-size: 44px; font-weight: 800; line-height: 1.2; margin-bottom: 20px; }
+    .hero h1 { font-size: 44px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+    .badge { display: inline-block; background: rgba(109,124,255,.12); border: 1px solid rgba(109,124,255,.3);
+      color: var(--accent2); border-radius: 20px; padding: 5px 14px; font-size: 13px; margin-bottom: 18px; }
+    .hero-sub { font-size: 17px; }
+    .diff3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px;
+      padding: 0 0 30px; margin-top: -20px; }
+    .diff-card { background: var(--panel); border: 1px solid rgba(255,255,255,.07); border-radius: var(--radius);
+      padding: 22px; }
+    .diff-card .ic { font-size: 24px; margin-bottom: 8px; }
+    .diff-card h3 { font-size: 15px; margin-bottom: 6px; }
+    .diff-card p { color: var(--muted); font-size: 13px; }
     .hero h1 .grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
     .hero p { color: var(--muted); font-size: 18px; max-width: 640px; margin: 0 auto 40px; }
     .btn { display: inline-block; background: var(--grad); color: #fff; text-decoration: none;
@@ -53,6 +63,8 @@
     .compare td.yes { color: #34d399; }
     .compare td.no { color: #f87171; }
     .cta { text-align: center; padding: 50px 0 30px; }
+    .coming-soon { display: inline-block; background: rgba(251,191,36,.1); border: 1px dashed rgba(251,191,36,.4);
+      color: #fbbf24; border-radius: 10px; padding: 10px 18px; font-size: 14px; margin-bottom: 18px; }
     .workflow { padding: 20px 0 30px; }
     .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 24px; }
     .step { background: var(--panel); border: 1px solid rgba(255,255,255,.07); border-radius: var(--radius); padding: 20px; position: relative; }
@@ -91,10 +103,18 @@
   </header>
 
   <section class="hero">
+    <div class="badge">NG = Next Generation · 本地运行的 Agent 团队操作系统</div>
     <h1>把目标交给平台<br><span class="grad">剩下它来干</span></h1>
-    <p>NG AI Platform 是一个面向长期项目的 Agent 团队操作系统——自动拆分任务、匹配专业 Agent、建立责任与复核链、主动推进到完成，并记录每一步决策与证据。</p>
+    <p class="hero-sub">不是又一个 AI 助手——是带责任制、可审计、不遗忘的 Agent 团队。<br>数据不出本机，双击即用。</p>
     <a class="btn" href="#download">🚀 下载使用</a>
-    <a class="btn ghost" href="#why">了解更多</a>
+    <a class="btn ghost" href="#why-top">它和普通 AI 助手有什么不同</a>
+  </section>
+
+  <!-- 首屏差异化卡片：为什么不用普通 AI 助手直接干 -->
+  <section class="diff3" id="why-top">
+    <div class="diff-card"><div class="ic">🧠</div><h3>AI 会遗忘</h3><p>普通助手聊完就忘；这里项目记忆结构化留存，决策、证据、版本都记着。</p></div>
+    <div class="diff-card"><div class="ic">🛡️</div><h3>AI 想干什么就干什么</h3><p>这里分级授权 + 审批门，关键动作必须你批准才执行。</p></div>
+    <div class="diff-card"><div class="ic">✅</div><h3>做完没人管</h3><p>这里自动交接复核链，产出交给下一责任人，责任到人、可追溯。</p></div>
   </section>
 
   <section class="cards" id="features">
@@ -134,13 +154,13 @@
     </div>
 
     <div class="example">
-      <div class="ex-title">🎬 一个真实例子</div>
-      <p>用户输入：<em>"整理本周 BTC 交易复盘，含每日流水、失败单分析、下周计划，输出成文档。"</em></p>
+      <div class="ex-title">🎬 一个例子：管理一个 3 个月的调研项目</div>
+      <p>用户输入：<em>"调研「企业知识管理工具的选型」，产出对比报告、实施建议和演示材料，3 个月完成。"</em></p>
       <ul>
-        <li>平台自动拆出 5 个任务：拉取流水 / 分析失败单 / 汇总 / 复盘 / 校对排版</li>
-        <li>自动指派 ng 助理（执行）＋ 龙虾（复核），建立责任链</li>
-        <li>执行 Agent 自动产出 5 篇文档 → 自动交接复核 → 复核通过 → 归档</li>
-        <li>全过程留痕：每条任务、决策、版本、审计记录都可回放</li>
+        <li>平台自动拆出任务：调研需求 / 竞品分析 / 专家访谈 / 对比报告 / 演示材料，并排好先后</li>
+        <li>自动指派不同 Agent 分别负责执行与复核，建立责任链</li>
+        <li>Agent 自动开工、产出 → 自动交接下一环节 → 复核 → 关键节点等你批准 → 归档</li>
+        <li>全过程留痕：每步决策、产出版本、审批记录都可回放，不因时间久远而遗忘</li>
       </ul>
     </div>
   </section>
@@ -148,8 +168,9 @@
   <section class="cta" id="download">
     <h2 style="margin-bottom:14px">下载使用</h2>
     <p style="color:var(--muted);margin-bottom:24px">Mac 版 · Windows 版 · 双击即用，无需配置</p>
-    <a class="btn" href="#" onclick="alert('Mac 版安装包即将上线，敬请期待');return false;">🍎 Mac 版</a>
-    <a class="btn" href="#" onclick="alert('Windows 版安装包即将上线，敬请期待');return false;">🪟 Windows 版</a>
+    <div class="coming-soon">安装包即将开放下载 —— 先填写下方申请，正式版发布后第一时间通知你</div>
+    <a class="btn" href="#" onclick="alert('Mac 版即将开放下载，敬请期待');return false;">🍎 Mac 版（即将开放）</a>
+    <a class="btn" href="#" onclick="alert('Windows 版即将开放下载，敬请期待');return false;">🪟 Windows 版（即将开放）</a>
   </section>
 
   <footer>
