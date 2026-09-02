@@ -74,9 +74,45 @@ class AutoAgentWorker(Worker):
                 found = e["payload"].get("executor", "builtin")
         return found == "builtin" if found is not None else False
 
+    def _project_goal(self, pid) -> str:
+        """项目目标（project.created 的 goal）。"""
+        for e in self._log.replay(project_id=pid):
+            if e["event_type"] == events.EventType.PROJECT_CREATED.value:
+                return e["payload"].get("goal", "")
+        return ""
+
+    def _upstream_content(self, tid: str) -> str:
+        """该任务 depends_on 上游已产出的交付物内容（供下游引用真实数据）。"""
+        deps = []
+        for e in self._log.replay(task_id=tid):
+            if e["event_type"] == events.EventType.TASK_CREATED.value:
+                deps = list(e["payload"].get("depends_on") or [])
+                break
+        chunks = []
+        for dep in deps:
+            # 上游产出 file_ref 从 deliverable.submitted 事件读，读文件内容
+            for e in self._log.replay(task_id=dep):
+                if e["event_type"] == events.EventType.DELIVERABLE_SUBMITTED.value:
+                    fr = e["payload"].get("file_ref", "")
+                    if fr:
+                        try:
+                            from pathlib import Path
+                            p = Path(fr)
+                            if not p.is_absolute():
+                                p = Path.cwd() / p
+                            if p.exists():
+                                chunks.append(f"【上游任务产出 {fr}】\n"
+                                              + p.read_text(encoding="utf-8", errors="replace")[:4000])
+                        except Exception:
+                            pass
+        return "\n\n".join(chunks)
+
     def _execute(self, tid: str, ctx: dict):
+        goal = self._project_goal(ctx["project_id"]) if ctx.get("project_id") else ""
+        upstream = self._upstream_content(tid)
         task = TaskContext(task_id=tid, title=ctx["title"], description=ctx["description"],
-                           deliverables=ctx["deliverables"])
+                           deliverables=ctx["deliverables"],
+                           project_goal=goal, upstream=upstream)
         result = BuiltinAgent().execute(task)
         idem = f"deliverable:{tid}:{result['file_ref']}:" + hashlib.sha256(
             f"done|{result['summary']}".encode()).hexdigest()[:10]

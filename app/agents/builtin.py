@@ -19,11 +19,15 @@ class TaskContext:
     title: str = ""
     description: str = ""
     deliverables: list[str] = field(default_factory=list)
+    project_goal: str = ""        # 项目目标（执行上下文，2026-09-03 汇总#2）
+    upstream: str = ""            # 上游交付物/源数据内容（治数据编造）
 
 
 SYSTEM_PROMPT = (
-    "你是 NG 平台的执行 agent。根据任务要求产出完整、结构化的交付内容（Markdown），"
-    "包括标题、小节、正文。直接输出内容，不要多余说明。"
+    "你是 NG 平台的执行 agent。根据任务要求产出完整、结构化的交付内容（Markdown）。\n"
+    "重要原则：只依据提供的【项目目标】【上游材料】和【本任务说明】作答；"
+    "若任务需要数值/数据而你手上没有真实数据，明确标注'数据不可得，以下为方法说明'，"
+    "绝不编造数字或声称算出了不存在的结果。"
 )
 
 
@@ -38,12 +42,14 @@ class BuiltinAgent:
         """产出交付物 → 落盘 artifacts/<task_id>.md。返回 {file_ref, summary, content_len}。"""
         self._artifacts.mkdir(parents=True, exist_ok=True)
         wants = task.deliverables or ["交付内容"]
-        prompt = (
-            f"任务：{task.title}\n"
-            f"描述：{task.description or '（无补充说明）'}\n"
-            f"要求交付：{', '.join(wants)}\n\n"
-            f"请产出完整的交付文档。"
-        )
+        parts = [f"任务：{task.title}\n",
+                 f"描述：{task.description or '（无补充说明）'}\n"]
+        if task.project_goal:
+            parts.append(f"项目目标：{task.project_goal}\n")
+        if task.upstream:
+            parts.append(f"上游材料/源数据：\n{task.upstream}\n")
+        parts.append(f"要求交付：{', '.join(wants)}\n\n请产出交付文档。")
+        prompt = "".join(parts)
         content = self._llm.complete(SYSTEM_PROMPT, prompt)
         file_ref = f"artifacts/{task.task_id}.md"
         (self._artifacts / f"{task.task_id}.md").write_text(content, encoding="utf-8")

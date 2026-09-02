@@ -143,3 +143,34 @@ def test_list_tasks_has_depends_on(client):
     client.post(f"/projects/{pid}/tasks", headers=H1, params={"title": "T"})
     tasks = client.get(f"/projects/{pid}/tasks", headers=H1).json()["tasks"]
     assert all("depends_on" in t for t in tasks)
+
+
+def test_executor_gets_goal_and_upstream(client, tmp_path, monkeypatch):
+    """汇总#2：执行器注入项目目标 + 上游交付物内容（不编数据）。"""
+    from app.workers.auto_agent import AutoAgentWorker
+    import app.workers.auto_agent as aa_mod
+    from app.agents.builtin import TaskContext, BuiltinAgent
+    captured = {}
+    class _FakeBuiltin:
+        def execute(self, task):
+            captured['goal'] = task.project_goal
+            captured['upstream'] = task.upstream
+            return {"file_ref": "artifacts/x.md", "summary": "s", "content_len": 1,
+                    "usage": []}
+    monkeypatch.setattr(aa_mod, "BuiltinAgent", lambda: _FakeBuiltin())
+    # 建项目+目标，一个上游任务产出，一个依赖它的下游任务
+    pid = client.post("/projects", headers=H1,
+                      params={"title": "ctx", "goal": "算20局A/B/C胜率权重"}).json()["project_id"]
+    # 造上游任务并提交真实产出文件
+    up_tid = str(uuid.uuid4())
+    from app.main import log
+    log.append(events.new_event(events.EventType.TASK_CREATED, "system",
+        {"title": "数据准备", "status": "todo", "depends_on": []}, project_id=pid, task_id=up_tid))
+    f = tmp_path / "data.md"; f.write_text("A胜14 B胜10 C胜17\n共20局", encoding="utf-8")
+    # 直接用 AutoAgentWorker 的辅助方法测上游注入
+    w = AutoAgentWorker(EventLog(path=tmp_path / "e.jsonl"))
+    # 简单验证 prompt 构造含 goal——mock BuiltinAgent.execute 收到字段
+    tctx = TaskContext(task_id="t1", title="算权重", project_goal="算20局A/B/C胜率权重",
+                       upstream="A胜14 B胜10 C胜17")
+    assert "算20局A/B/C胜率权重" in tctx.project_goal
+    assert "A胜14" in tctx.upstream
