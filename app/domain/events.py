@@ -29,6 +29,7 @@ class EventType(str, Enum):
     USAGE_RECORDED = "usage.recorded"         # LLM 用量（token）记录
     USER_REGISTERED = "user.registered"       # 用户注册（多用户，2026-09-01）
     USER_LOGGED_IN = "user.logged_in"         # 用户登录（多用户，2026-09-01）
+    AGENT_EXECUTION_FAILED = "agent.execution_failed"  # 执行失败可审计（汇总v1.2 ⑤）
 
 
 import time

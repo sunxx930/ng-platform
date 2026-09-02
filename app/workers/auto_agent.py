@@ -122,7 +122,17 @@ class AutoAgentWorker(Worker):
         task = TaskContext(task_id=tid, title=ctx["title"], description=ctx["description"],
                            deliverables=ctx["deliverables"],
                            project_goal=goal, upstream=upstream)
-        result = BuiltinAgent().execute(task)
+        try:
+            result = BuiltinAgent().execute(task)
+        except Exception as e:      # noqa: BLE001
+            # 汇总v1.2 ⑤（2026-09-03）：执行失败写可审计事件，不静默（tick 仍会 print 兜底）
+            self._log.append(events.new_event(
+                events.EventType.AGENT_EXECUTION_FAILED, f"agent:{AGENT_NAME}",
+                {"error": str(e)[:300], "title": ctx.get("title", "")},
+                project_id=ctx.get("project_id"), task_id=tid,
+                idempotency_key=f"execfail:{tid}:" + hashlib.sha256(
+                    str(e).encode()).hexdigest()[:10]))
+            raise
         idem = f"deliverable:{tid}:{result['file_ref']}:" + hashlib.sha256(
             f"done|{result['summary']}".encode()).hexdigest()[:10]
         self._log.append(events.new_event(
