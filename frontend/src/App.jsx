@@ -122,7 +122,15 @@ function AuthScreen({ onAuth }) {
 
 function App() {
   const [session, setSession] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('ng_session')) } catch { return null }
+    // 测试直通：URL 带 ?demo=<token> → 免注册直接以 demo 身份进入（测试 agent 用）
+    try {
+      const dp = new URLSearchParams(window.location.search).get('demo')
+      if (dp) {
+        localStorage.setItem('ng_session', JSON.stringify({ token: dp, username: 'demo-admin', level: 3 }))
+        return { token: dp, username: 'demo-admin', level: 3 }
+      }
+      return JSON.parse(localStorage.getItem('ng_session'))
+    } catch { return null }
   })
   const token = session?.token || ''
   const [projects, setProjects] = useState([])
@@ -257,11 +265,23 @@ function App() {
   const approvals = (detail?.audit || []).filter((e) => ['approval.requested', 'approval.decided'].includes(e.event_type))
   const decidedAids = new Set(approvals.filter((e) => e.event_type === 'approval.decided').map((e) => e.payload?.approval_id))
   const pendingApprovals = approvals.filter((e) => e.event_type === 'approval.requested' && !decidedAids.has(e.payload?.approval_id))
+  // 待复核（龙虾反馈 2026-09-02：前端需补复核决策入口）：review.requested 且未 review.decided
+  const reviewsAll = (detail?.audit || []).filter((e) => ['review.requested', 'review.decided'].includes(e.event_type))
+  const decidedRids = new Set(reviewsAll.filter((e) => e.event_type === 'review.decided').map((e) => e.payload?.review_id))
+  const pendingReviews = reviewsAll.filter((e) => e.event_type === 'review.requested' && !decidedRids.has(e.payload?.review_id))
+  // 关联任务标题
+  const tidTitle = {}; (detail?.tasks || []).forEach((t) => { tidTitle[t.task_id] = t.title })
   const audit = (detail?.audit || []).slice(-20).reverse()
 
   function decideApproval(aid, result) {
     api(`/approvals/${aid}/decision?result=${result}`, token, { method: 'POST' })
       .then(() => { if (selected) loadDetail(selected); showToast(result === 'approve' ? '✅ 已批准' : '已拒绝') })
+      .catch((e) => setError(errMsg(e)))
+  }
+
+  function decideReview(rid, verdict) {
+    api(`/reviews/${rid}/decision?verdict=${verdict}`, token, { method: 'POST' })
+      .then(() => { if (selected) loadDetail(selected); showToast(verdict === 'pass' ? '✅ 复核通过' : verdict === 'reject' ? '✕ 复核拒绝' : `复核：${verdict}`) })
       .catch((e) => setError(errMsg(e)))
   }
 
@@ -486,7 +506,22 @@ function App() {
               </div>
 
               <h2>待办中心</h2>
-              {pendingApprovals.length === 0 ? <p className="muted">暂无待审批项</p> : (
+              {pendingReviews.length > 0 && (
+                <div className="approvals" style={{ marginBottom: 12 }}>
+                  {pendingReviews.map((e, i) => (
+                    <div className="ap-row" key={'rv' + i}>
+                      <span className="ap-type">待复核</span>
+                      <span className="ap-scope">{tidTitle[e.task_id] || '任务'}</span>
+                      <span className="ap-actions">
+                        <button className="mini ok" data-testid="review-pass" onClick={() => decideReview(e.payload.review_id, 'pass')}>✅ 通过</button>
+                        <button className="mini" data-testid="review-changes" onClick={() => decideReview(e.payload.review_id, 'needs_changes')}>↩ 需修改</button>
+                        <button className="mini danger" data-testid="review-reject" onClick={() => decideReview(e.payload.review_id, 'reject')}>✕ 拒绝</button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {pendingApprovals.length === 0 && pendingReviews.length === 0 ? <p className="muted">暂无待办项</p> : (
                 <div className="approvals">
                   {pendingApprovals.map((e, i) => (
                     <div className="ap-row" key={i}>
