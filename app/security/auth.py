@@ -39,6 +39,12 @@ def resolve_tokens(env: dict) -> dict[str, tuple[str, int]]:
 
 TOKENS = resolve_tokens(dict(os.environ))
 
+
+# 测试模式（2026-09-02）：NG_DEMO_TOKEN 注入后加入静态 token 表，供测试 agent 免注册直通
+_DEMO_TOKEN = os.environ.get("NG_DEMO_TOKEN", "").strip()
+if _DEMO_TOKEN and _DEMO_TOKEN not in TOKENS:
+    TOKENS[_DEMO_TOKEN] = ("demo-admin", 3)
+
 # 多用户（2026-09-01）：注册用户会话 token 走 UserStore（main.py 启动时注入）。
 # 静态 token 契约不变——先查会话 token，未命中再查静态注册表（服务器端管理员/agent 通道）。
 user_store = None
@@ -54,6 +60,10 @@ def require_auth(authorization: str = Header(default="")):
 
     - 注册用户会话 token → UserStore 解析出 {user_id, username, level}
     - 静态 token（NG_LEVEL3/NG_LEVEL1）→ 服务器端通道，user_id=None
+
+    注：demo token（NG_DEMO_TOKEN）走静态 token 分支、user_id=None——demo 是
+    「共享试用沙盒」（试用者互看项目方便协作），不做用户隔离；真实多用户隔离
+    由注册用户会话 token 承担（各看各的）。
     """
     token = authorization.removeprefix("Bearer ").strip()
     if not token:
