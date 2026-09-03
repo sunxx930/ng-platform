@@ -1037,13 +1037,18 @@ def review_decision(rid: str, verdict: ReviewVerdict, opinion: str = "",
     #   needs_changes → 退回 in_progress（返工可修改重交）
     #   reject        → 退回 in_progress（打回重做）
     if req.get("task_id"):
-        _apply_review_outcome(req["task_id"], req.get("project_id"), verdict, opinion.strip())
+        _apply_review_outcome(req["task_id"], req.get("project_id"), verdict,
+                              opinion.strip(), rid)
     return {"review_id": rid, "verdict": verdict.value, "opinion": opinion.strip()}
 
 
 def _apply_review_outcome(tid: str, pid: str | None, verdict: ReviewVerdict,
-                          opinion: str = ""):
-    """复核结论 → 任务状态联动（仅当 in_review，幂等）。"""
+                          opinion: str = "", rid: str = ""):
+    """复核结论 → 任务状态联动（仅当 in_review，幂等）。
+
+    rid 用于幂等键分量（汇总 v2.4，2026-09-03）：同任务同 verdict 不同轮次 review
+    打回多次时，幂等键必须含 review_id，否则第二次被吞（状态不更新/事件丢失）。
+    """
     state = TaskStatus.TODO
     for e in log.replay(task_id=tid):
         if e["event_type"] == events.EventType.TASK_STATE_CHANGED.value:
@@ -1062,7 +1067,7 @@ def _apply_review_outcome(tid: str, pid: str | None, verdict: ReviewVerdict,
          "trigger": trigger, "verdict": verdict.value,
          "opinion": opinion},   # 修改指令随返工状态记录（④）
         project_id=pid, task_id=tid,
-        idempotency_key=f"review_outcome:{tid}:{verdict.value}"))
+        idempotency_key=f"review_outcome:{tid}:{verdict.value}:{rid or 'x'}"))
 
 
 @app.post("/tasks/{tid}/approvals")
