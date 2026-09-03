@@ -96,7 +96,12 @@ class AutoAgentWorker(Worker):
         return ""
 
     def _upstream_content(self, tid: str) -> str:
-        """该任务 depends_on 上游已产出的交付物内容（供下游引用真实数据）。"""
+        """该任务 depends_on 上游已产出的交付物内容（供下游引用真实数据）。
+
+        E1 修复（2026-09-03）：只取每个上游任务【最新一次】deliverable——
+        旧错误版（被打回/重跑的历史稿）不拼进上下文，避免污染下游
+        （algo 实锤：任务2 挑了第一版错统计）。
+        """
         deps = []
         for e in self._log.replay(task_id=tid):
             if e["event_type"] == events.EventType.TASK_CREATED.value:
@@ -104,21 +109,23 @@ class AutoAgentWorker(Worker):
                 break
         chunks = []
         for dep in deps:
-            # 上游产出 file_ref 从 deliverable.submitted 事件读，读文件内容
+            latest_fr = None
             for e in self._log.replay(task_id=dep):
                 if e["event_type"] == events.EventType.DELIVERABLE_SUBMITTED.value:
                     fr = e["payload"].get("file_ref", "")
                     if fr:
-                        try:
-                            from pathlib import Path
-                            p = Path(fr)
-                            if not p.is_absolute():
-                                p = Path.cwd() / p
-                            if p.exists():
-                                chunks.append(f"【上游任务产出 {fr}】\n"
-                                              + p.read_text(encoding="utf-8", errors="replace")[:4000])
-                        except Exception:
-                            pass
+                        latest_fr = fr   # 覆盖式：循环到末尾即最新
+            if latest_fr:
+                try:
+                    from pathlib import Path
+                    p = Path(latest_fr)
+                    if not p.is_absolute():
+                        p = Path.cwd() / p
+                    if p.exists():
+                        chunks.append(f"【上游任务最新产出 {latest_fr}】\n"
+                                      + p.read_text(encoding="utf-8", errors="replace")[:4000])
+                except Exception:
+                    pass
         return "\n\n".join(chunks)
 
     def _execute(self, tid: str, ctx: dict):
