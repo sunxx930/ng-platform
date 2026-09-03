@@ -54,7 +54,17 @@ class BuiltinAgent:
         parts.append(f"要求交付：{', '.join(wants)}\n\n请产出交付文档。")
         prompt = "".join(parts)
         content = self._llm.complete(SYSTEM_PROMPT, prompt)
-        file_ref = f"artifacts/{task.task_id}.md"
-        (self._artifacts / f"{task.task_id}.md").write_text(content, encoding="utf-8")
-        return {"file_ref": file_ref, "summary": f"已产出《{task.title}》交付文档",
+        # 打回重修死循环修复（2026-09-03 D6）：重跑若复用同 file_ref，deliverable 幂等键
+        # 同内容会被吞 → 无新产出事件 → 状态不进 in_review → 每轮重跑烧 token。
+        # 文件已存在（重跑/修稿）→ 用递增后缀，保证每次产出是新 deliverable。
+        base = self._artifacts / f"{task.task_id}.md"
+        n = 0
+        target = base
+        while target.exists():
+            n += 1
+            target = self._artifacts / f"{task.task_id}.retry{n}.md"
+        target.write_text(content, encoding="utf-8")
+        file_ref = f"artifacts/{target.name}"
+        return {"file_ref": file_ref, "summary": f"已产出《{task.title}》交付文档"
+                + (f"（第{n+1}稿）" if n else ""),
                 "content_len": len(content), "usage": self._llm.usage()}

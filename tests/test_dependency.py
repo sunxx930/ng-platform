@@ -174,3 +174,21 @@ def test_executor_gets_goal_and_upstream(client, tmp_path, monkeypatch):
                        upstream="A胜14 B胜10 C胜17")
     assert "算20局A/B/C胜率权重" in tctx.project_goal
     assert "A胜14" in tctx.upstream
+
+
+def test_builtin_rerun_new_file_ref(tmp_path):
+    """D6 回归：BuiltinAgent 重跑产生新 file_ref（不吞幂等 → 打破 reject 死循环）。"""
+    import app.agents.builtin as bmod
+    from app.agents.builtin import BuiltinAgent, TaskContext
+    class _FakeLLM:
+        def usage(self): return []
+        def complete(self, s, u, **kw): return "新稿内容"
+    a = BuiltinAgent(llm=_FakeLLM(), artifacts_dir=tmp_path)
+    t = TaskContext(task_id="d6-test", title="T")
+    r1 = a.execute(t)
+    r2 = a.execute(t)   # 重跑
+    assert r1["file_ref"] != r2["file_ref"], f"重跑应新 file_ref: {r1} vs {r2}"
+    assert "retry1" in r2["file_ref"], f"第二次应 .retry1: {r2}"
+    # 文件都存在
+    assert (tmp_path / "d6-test.md").exists()
+    assert (tmp_path / "d6-test.retry1.md").exists()

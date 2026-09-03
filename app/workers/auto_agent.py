@@ -44,13 +44,18 @@ class AutoAgentWorker(Worker):
                 ctx["has_deliverable"] = True
         if ctx["status"] != TaskStatus.IN_PROGRESS:
             return
-        # 汇总v1.1 ③（2026-09-03）：needs_changes/reject 打回的任务要能重做——
-        # 有产出但被打回(有非pass review结论) → 允许重新执行；否则有产出则跳过
+        # 汇总v1.1 ③ + D6（2026-09-03）：needs_changes/reject 打回的任务要能重做——
+        # 有产出但被打回(有非pass review结论) → 允许重新执行；否则有产出则跳过。
+        # 但打回次数 ≥3 → 不再自动重跑（防无限烧 token，留待人工介入/换 agent）。
         rework = False
+        rework_count = 0
         for e in evs:
             if e["event_type"] == events.EventType.REVIEW_DECIDED.value \
                     and e["payload"].get("verdict") in ("needs_changes", "reject"):
                 rework = True
+                rework_count += 1
+        if rework_count >= 3:
+            return   # 反复打回超限，停自动重跑（人工介入）
         if ctx["has_deliverable"] and not rework:
             return
         if ctx["owner"] is None or not self._is_builtin(ctx["owner"]):
