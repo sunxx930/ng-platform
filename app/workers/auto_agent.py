@@ -128,12 +128,41 @@ class AutoAgentWorker(Worker):
                     pass
         return "\n\n".join(chunks)
 
+    def _deliverable_evidence(self, file_ref: str) -> dict:
+        """产出证据（汇总 ⑤，2026-09-03）：与人工路径一致，读文件算内容长度/哈希/预览。"""
+        try:
+            from pathlib import Path
+            p = Path(file_ref)
+            if not p.is_absolute():
+                p = Path.cwd() / p
+            if not p.exists():
+                return {"file_missing": True, "note": f"file_ref={file_ref} 未找到"}
+            content = p.read_text(encoding="utf-8", errors="replace")
+            return {"content_len": len(content),
+                    "content_hash": hashlib.sha256(content.encode()).hexdigest()[:16],
+                    "preview": content[:500], "file_missing": False}
+        except Exception as e:
+            return {"file_missing": True, "note": f"读取失败: {e}"}
+
+    def _review_opinion(self, tid: str) -> str:
+        """最近一次打回(needs_changes/reject)的复核修改意见（④），供重跑时修正。"""
+        opinion = ""
+        for e in self._log.replay(task_id=tid):
+            if e["event_type"] == events.EventType.REVIEW_DECIDED.value \
+                    and e["payload"].get("verdict") in ("needs_changes", "reject"):
+                op = e["payload"].get("opinion", "")
+                if op:
+                    opinion = op   # 覆盖式：循环到末尾即最新打回意见
+        return opinion
+
     def _execute(self, tid: str, ctx: dict):
         goal = self._project_goal(ctx["project_id"]) if ctx.get("project_id") else ""
         upstream = self._upstream_content(tid)
+        opinion = self._review_opinion(tid)
         task = TaskContext(task_id=tid, title=ctx["title"], description=ctx["description"],
                            deliverables=ctx["deliverables"],
-                           project_goal=goal, upstream=upstream)
+                           project_goal=goal, upstream=upstream,
+                           review_opinion=opinion)
         try:
             result = BuiltinAgent().execute(task)
         except Exception as e:      # noqa: BLE001
@@ -147,10 +176,14 @@ class AutoAgentWorker(Worker):
             raise
         idem = f"deliverable:{tid}:{result['file_ref']}:" + hashlib.sha256(
             f"done|{result['summary']}".encode()).hexdigest()[:10]
+        # auto 路径交付证据字段（汇总 ⑤）：与人工路径一致，带 content_len/hash/preview
+        evidence = self._deliverable_evidence(result["file_ref"])
+        payload = {"file_ref": result["file_ref"], "version": 1, "verdict": "done",
+                   "summary": result["summary"]}
+        payload.update(evidence)
         self._log.append(events.new_event(
             events.EventType.DELIVERABLE_SUBMITTED, f"agent:{AGENT_NAME}",
-            {"file_ref": result["file_ref"], "version": 1, "verdict": "done",
-             "summary": result["summary"]},
+            payload,
             project_id=ctx["project_id"], task_id=tid, idempotency_key=idem))
         self._log.append(events.new_event(
             events.EventType.TASK_STATE_CHANGED, f"agent:{AGENT_NAME}",

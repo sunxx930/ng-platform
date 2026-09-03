@@ -1000,8 +1000,13 @@ def request_review(tid: str, auth: dict = Depends(require_auth)):
 
 
 @app.post("/reviews/{rid}/decision")
-def review_decision(rid: str, verdict: ReviewVerdict, auth: dict = Depends(require_auth)):
-    """复核结论：校验 review_id 存在并绑定任务（对象绑定，缺权限 403）。"""
+def review_decision(rid: str, verdict: ReviewVerdict, opinion: str = "",
+                    auth: dict = Depends(require_auth)):
+    """复核结论：校验 review_id 存在并绑定任务（对象绑定，缺权限 403）。
+
+    opinion（汇总#3 建议 ④）：打回(needs_changes/reject)时的修改指令，
+    记录到 review.decided 事件，供 auto_agent 重跑时读取、避免盲改。
+    """
     require_level("change_task_state", auth["level"])
     evs = log.replay()
     req = next((e for e in evs if e["event_type"] == events.EventType.REVIEW_REQUESTED.value
@@ -1023,7 +1028,8 @@ def review_decision(rid: str, verdict: ReviewVerdict, auth: dict = Depends(requi
                 f"复核权限不足：任务指派复核人为 {assigned_reviewer}，你不是该任务的 reviewer（或需 L3）")
     log.append(events.new_event(
         events.EventType.REVIEW_DECIDED, "reviewer",
-        {"review_id": rid, "verdict": verdict.value},
+        {"review_id": rid, "verdict": verdict.value,
+         "opinion": opinion.strip()},   # 打回修改指令（④）
         project_id=req.get("project_id"), task_id=req.get("task_id"),
         idempotency_key=f"review:dec:{rid}"))
     # 试用汇总#1#3（2026-09-03）：复核决策联动任务状态，返工不卡死。
@@ -1031,11 +1037,12 @@ def review_decision(rid: str, verdict: ReviewVerdict, auth: dict = Depends(requi
     #   needs_changes → 退回 in_progress（返工可修改重交）
     #   reject        → 退回 in_progress（打回重做）
     if req.get("task_id"):
-        _apply_review_outcome(req["task_id"], req.get("project_id"), verdict)
-    return {"review_id": rid, "verdict": verdict.value}
+        _apply_review_outcome(req["task_id"], req.get("project_id"), verdict, opinion.strip())
+    return {"review_id": rid, "verdict": verdict.value, "opinion": opinion.strip()}
 
 
-def _apply_review_outcome(tid: str, pid: str | None, verdict: ReviewVerdict):
+def _apply_review_outcome(tid: str, pid: str | None, verdict: ReviewVerdict,
+                          opinion: str = ""):
     """复核结论 → 任务状态联动（仅当 in_review，幂等）。"""
     state = TaskStatus.TODO
     for e in log.replay(task_id=tid):
@@ -1052,7 +1059,8 @@ def _apply_review_outcome(tid: str, pid: str | None, verdict: ReviewVerdict):
     log.append(events.new_event(
         events.EventType.TASK_STATE_CHANGED, "system",
         {"from": TaskStatus.IN_REVIEW.value, "to": to.value,
-         "trigger": trigger, "verdict": verdict.value},
+         "trigger": trigger, "verdict": verdict.value,
+         "opinion": opinion},   # 修改指令随返工状态记录（④）
         project_id=pid, task_id=tid,
         idempotency_key=f"review_outcome:{tid}:{verdict.value}"))
 

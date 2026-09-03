@@ -21,6 +21,7 @@ class TaskContext:
     deliverables: list[str] = field(default_factory=list)
     project_goal: str = ""        # 项目目标（执行上下文，2026-09-03 汇总#2）
     upstream: str = ""            # 上游交付物/源数据内容（治数据编造）
+    review_opinion: str = ""      # 复核打回修改指令（④，2026-09-03）
 
 
 SYSTEM_PROMPT = (
@@ -51,6 +52,8 @@ class BuiltinAgent:
             parts.append(f"项目目标：{task.project_goal}\n")
         if task.upstream:
             parts.append(f"上游材料/源数据：\n{task.upstream}\n")
+        if task.review_opinion:
+            parts.append(f"上次复核意见（本次需修正）:\n{task.review_opinion}\n")
         parts.append(f"要求交付：{', '.join(wants)}\n\n请产出交付文档。")
         prompt = "".join(parts)
         content = self._llm.complete(SYSTEM_PROMPT, prompt)
