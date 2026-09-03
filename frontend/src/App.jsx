@@ -31,6 +31,11 @@ const LEGAL = {
   pending_approval: ['completed', 'in_progress', 'cancelled'],
 }
 
+// 数值型任务检测（防投诉护栏 2026-09-03）：标题含数值计算词 → 复核需核对算式
+const NUMERIC_WORDS = ['计算', '统计', '权重', '比率', '胜率', '均值', '检验', '概率', '金额', '算', '汇总', '指标']
+function isNumericTask(title = '') {
+  return NUMERIC_WORDS.some((w) => title.includes(w))
+}
 const STATUS = {
   todo: { cn: '待办', cls: 'todo' },
   in_progress: { cn: '进行中', cls: 'doing' },
@@ -524,6 +529,9 @@ function App() {
                     <div className="ap-row" key={'rv' + i}>
                       <span className="ap-type">待复核</span>
                       <span className="ap-scope">{tidTitle[e.task_id] || '任务'}</span>
+                      {isNumericTask(tidTitle[e.task_id]) && (
+                        <span className="ap-num-note" data-testid="review-numeric-note">⚠ 数值任务：请核对算式与输入</span>
+                      )}
                       <span className="ap-actions">
                         <button className="mini ok" data-testid="review-pass" onClick={() => decideReview(e.payload.review_id, 'pass')}>✅ 通过</button>
                         <button className="mini" data-testid="review-changes" onClick={() => decideReview(e.payload.review_id, 'needs_changes')}>↩ 需修改</button>
