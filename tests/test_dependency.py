@@ -192,3 +192,40 @@ def test_builtin_rerun_new_file_ref(tmp_path):
     # 文件都存在
     assert (tmp_path / "d6-test.md").exists()
     assert (tmp_path / "d6-test.retry1.md").exists()
+
+
+def test_auto_stops_after_3_rework(tmp_path):
+    """保险丝（汇总v2.4未测分支）：打回≥3次后 auto_agent 停自动重跑（防无限烧）。"""
+    import uuid as uuid_mod
+    from app.workers.auto_agent import AutoAgentWorker
+    import app.workers.auto_agent as aa_mod
+    log = EventLog(path=tmp_path / "e.jsonl")
+    pid = str(uuid_mod.uuid4())
+    tid = _mk(log, pid, "R")   # builtin 任务（owner 需为 builtin agent）
+    # 指派 owner 为 ng-assistant（builtin）
+    log.append(events.new_event(events.EventType.AGENT_REGISTERED, "sys",
+        {"name": "ng-assistant", "executor": "builtin"},
+        idempotency_key=f"reg-{uuid_mod.uuid4().hex}"))
+    log.append(events.new_event(events.EventType.AGENT_ASSIGNED, "sys",
+        {"agent": "ng-assistant", "role": "owner"}, project_id=pid, task_id=tid))
+    # 3 次 needs_changes 打回记录
+    for i in range(3):
+        log.append(events.new_event(events.EventType.REVIEW_DECIDED, "reviewer",
+            {"review_id": f"rv{i}-{uuid_mod.uuid4().hex}", "verdict": "needs_changes",
+             "opinion": f"改{i}"}, project_id=pid, task_id=tid))
+    # 模拟 BuiltinAgent 不执行（断言不会走到 execute）
+    called = {"n": 0}
+    class _FakeBuiltin:
+        def __init__(self, *a, **kw): pass
+        def execute(self, task):
+            called["n"] += 1
+            return {"file_ref": "artifacts/x.md", "summary": "s", "content_len": 1, "usage": []}
+    aa_mod.BuiltinAgent = _FakeBuiltin
+    w = AutoAgentWorker(log, state_dir=tmp_path / "w")
+    # 任务需 in_progress 且 has_deliverable 才进 rework 判断
+    log.append(events.new_event(events.EventType.TASK_STATE_CHANGED, "sys",
+        {"from": "todo", "to": "in_progress"}, project_id=pid, task_id=tid))
+    log.append(events.new_event(events.EventType.DELIVERABLE_SUBMITTED, "agent",
+        {"file_ref": "artifacts/orig.md"}, project_id=pid, task_id=tid))
+    w._maybe_execute(tid)
+    assert called["n"] == 0, f"打回3次后不应自动重跑，实际执行 {called['n']} 次"
