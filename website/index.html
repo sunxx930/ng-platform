@@ -24,10 +24,9 @@
     .wrap { max-width: 1000px; margin: 0 auto; padding: 30px 24px; }
     header { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; }
     .logo { display: flex; align-items: center; gap: 12px; }
-    .logo-img { width: 44px; height: 44px; border-radius: 12px; background: #fff;
-      object-fit: cover; box-shadow: 0 4px 18px rgba(109,124,255,.35); }
-    .logo-name { font-size: 18px; font-weight: 700; }
-    .logo-name .accent { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .logo-pill { display: inline-flex; align-items: center; background: #fff;
+      border-radius: 9px; padding: 6px 12px; box-shadow: 0 4px 18px rgba(109,124,255,.25); }
+    .logo-pill img { height: 30px; width: auto; display: block; }
     nav a { color: var(--muted); text-decoration: none; margin-left: 22px; font-size: 14px; }
     nav a:hover { color: var(--text); }
     .hero { text-align: center; padding: 90px 20px 60px; }
@@ -91,8 +90,7 @@
 <div class="wrap">
   <header>
     <div class="logo">
-      <img class="logo-img" src="logo-chip.png" alt="NG AI Platform logo">
-      <div class="logo-name"><span class="accent">NG</span> AI Platform</div>
+      <span class="logo-pill"><img src="logo-trim.png" alt="NG AI Platform"></span>
     </div>
     <nav>
       <a href="#features">能力</a>
