@@ -149,8 +149,9 @@ function App() {
   const [agents, setAgents] = useState([])
   const [templates, setTemplates] = useState([])
   const [error, setError] = useState('')
-  const [llm, setLlm] = useState({ provider: 'openai', api_key: '', model: '', base_url: '' })
+  const [llm, setLlm] = useState({ provider: 'qwen', api_key: '', model: '', base_url: '' })   // 默认千问（开箱即用 B 方案）
   const [llmCurrent, setLlmCurrent] = useState(null)
+  const [needGuide, setNeedGuide] = useState(false)   // 无 key → 显示千问免费引导
   const [providers, setProviders] = useState([])
   const [usage, setUsage] = useState(null)
   const [goal, setGoal] = useState('')
@@ -192,7 +193,17 @@ function App() {
 
   useEffect(() => { if (authed) api('/agents', token).then((d) => setAgents(d.agents || [])).catch(() => {}) }, [authed, token])
   useEffect(() => { if (authed) api('/agents/templates', token).then((d) => setTemplates(d.templates || [])).catch(() => {}) }, [authed, token])
-  useEffect(() => { if (authed) api('/agents/llm-config', token).then(setLlmCurrent).catch(() => {}) }, [authed, token])
+  useEffect(() => {
+    if (!authed) return
+    api('/agents/llm-config', token).then((d) => {
+      setLlmCurrent(d)
+      // B 方案（2026-09-04）：无已保存 key → 默认千问 + 显示免费引导
+      if (!d?.api_key_set) {
+        setNeedGuide(true)
+        setLlm((prev) => ({ ...prev, provider: 'qwen', model: 'qwen-max', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }))
+      }
+    }).catch(() => {})
+  }, [authed, token])
   useEffect(() => { if (authed) api('/agents/providers', token).then((d) => setProviders(d.providers || [])).catch(() => {}) }, [authed, token])
   useEffect(() => { if (authed) api('/usage', token).then(setUsage).catch(() => {}) }, [authed, token])
   useEffect(() => {
@@ -376,6 +387,17 @@ function App() {
         <aside className="sidebar">
           <h3>算力</h3>
           <div className="llm">
+            {needGuide && (
+              <div className="llm-guide" data-testid="llm-guide">
+                <div className="llm-guide-t">🚀 还没配算力？推荐用通义千问（有免费额度）</div>
+                <ol>
+                  <li>打开 <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" rel="noreferrer">DashScope</a> 用阿里云账号登录（免费注册）</li>
+                  <li>在「API-KEY 管理」创建密钥</li>
+                  <li>把 key 粘贴到下面 → 点「保存算力配置」即可用</li>
+                </ol>
+                <div className="llm-guide-note">千问提供免费试用额度，适合入门；要更强可换 OpenAI/Claude 等（需自行购买 API）</div>
+              </div>
+            )}
             <select value={llm.provider} onChange={(e) => {
               const p = providers.find((x) => x.id === e.target.value)
               setLlm({ provider: e.target.value, api_key: '', model: p?.default_model || '', base_url: p?.base_url || '' })

@@ -534,7 +534,9 @@ LLM_PROVIDERS: dict[str, dict] = {
     # 二线
     "qwen":        {"name": "阿里通义 Qwen",     "tier": "二线", "type": "openai_compatible",
                     "default_model": "qwen-max",
-                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"},
+                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "free_tier": True, "free_note": "注册 DashScope 有免费额度，适合入门"},
+
     "glm":         {"name": "智谱 GLM",          "tier": "二线", "type": "openai_compatible",
                     "default_model": "glm-4-flash",
                     "base_url": "https://open.bigmodel.cn/api/paas/v4"},
@@ -588,7 +590,8 @@ def list_providers(auth: dict = Depends(require_auth)):
     require_level("read_project", auth["level"])
     return {"providers": [
         {"id": k, "name": v["name"], "tier": v["tier"],
-         "default_model": v["default_model"], "base_url": v["base_url"]}
+         "default_model": v["default_model"], "base_url": v["base_url"],
+         "free_tier": v.get("free_tier", False), "free_note": v.get("free_note", "")}
         for k, v in LLM_PROVIDERS.items()]}
 
 
