@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="favicon.png">
   <title>NG AI Platform —— 把目标交给平台，剩下它来干</title>
   <style>
     :root {
@@ -23,9 +24,8 @@
     .wrap { max-width: 1000px; margin: 0 auto; padding: 30px 24px; }
     header { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; }
     .logo { display: flex; align-items: center; gap: 12px; }
-    .logo-icon { width: 40px; height: 40px; border-radius: 11px; background: var(--grad);
-      display: flex; align-items: center; justify-content: center; font-size: 22px;
-      box-shadow: 0 4px 18px rgba(109,124,255,.4); }
+    .logo-img { width: 44px; height: 44px; border-radius: 12px; background: #fff;
+      object-fit: cover; box-shadow: 0 4px 18px rgba(109,124,255,.35); }
     .logo-name { font-size: 18px; font-weight: 700; }
     .logo-name .accent { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
     nav a { color: var(--muted); text-decoration: none; margin-left: 22px; font-size: 14px; }
@@ -91,7 +91,7 @@
 <div class="wrap">
   <header>
     <div class="logo">
-      <div class="logo-icon">🐳</div>
+      <img class="logo-img" src="logo-chip.png" alt="NG AI Platform logo">
       <div class="logo-name"><span class="accent">NG</span> AI Platform</div>
     </div>
     <nav>
