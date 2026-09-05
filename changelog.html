@@ -1,0 +1,62 @@
+<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>更新日志 · NG AI Platform™</title><style>
+:root{--bg:#0b0f1a;--panel:#151b2b;--text:#eef0f6;--muted:#98a1b5;--accent:#6d7cff;--accent2:#4facfe}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'PingFang SC','Songti SC',system-ui,sans-serif;background:var(--bg);color:var(--text);line-height:1.7;padding:34px 20px}
+.wrap{max-width:760px;margin:0 auto}
+a{color:var(--accent2);text-decoration:none}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;font-size:14px;color:var(--muted)}
+h1{font-size:24px;margin-bottom:6px}
+h2{font-size:18px;margin:26px 0 6px;padding-bottom:6px;border-bottom:1px solid #262f45;color:#fff}
+h3{font-size:15px;margin:14px 0 4px;color:var(--accent2)}
+p{margin:4px 0}
+ul{margin:4px 0 4px 22px}
+li{margin:2px 0}
+strong{color:#fff}
+code{background:#202a44;padding:1px 5px;border-radius:5px;font-size:.9em}
+</style></head><body><div class='wrap'><div class='top'><a href='index.html'>← 返回首页</a><span>NG AI Platform™</span></div><h1>CHANGELOG（升级内容）</h1>
+<blockquote>
+<p>发布惯例（类 openclaw）：每次发版 = <strong>版本号 + 日期 + 升级内容清单</strong>。
+升级内容分四类标注：<strong>新增 / 修复 / 安全 / 其他</strong>；用户可见项尽量口语化。
+本文从下往上：新版本在上。</p>
+</blockquote>
+<h2>v1.2.0（2026-09-05）— 升级模式 + 数值自动复算</h2>
+<p><strong>新增</strong>
+- 升级模式 A：检查更新——顶栏显示当前版本 vX.Y.Z + "↻ 更新"按钮（服务端拉官网 <code>version.json</code> 对比）；<code>/health</code>/<code>/version</code> 返回当前版本
+- 数值任务自动复算比对：数值类交付在人工复核前自动跑一道独立复算（读交付物算式/输入再算一遍），落 <code>auto.rechecked</code> 事件；复核队列显示 ✅通过/⚠存疑/🔁不可用，可重跑；best-effort 不阻塞，人工复核仍是最终决策
+- 品牌标注：商标注册前统一 ™（官网/App 可见品牌名）
+- 真自动更新（Sparkle/Squirrel）列入改造清单（成熟后再上）</p>
+<h2>v1.1.2（2026-09-05）— 上线阻塞清零版</h2>
+<p><strong>修复</strong>
+- file_ref 契约回归：自动执行/人工提交的交付证据恢复（file_missing 恒真问题），E1 上游注入恢复（下游能读到上游最新材料，不再旧版污染）；兼容旧 <code>artifacts/</code> 前缀与根内绝对路径，沙箱外仍拒 403
+- CI docker-e2e：前端 dist 资产纳入仓库，Docker/全新环境不再缺 assets 导致 api 起不来
+- 并发复核去重：同一交付不再生成多个复核请求（幂等键绑定交付内容）
+- 终态守卫：任务完成/取消/归档后不能再追加交付物
+- 交付物 version 字段随返工递增（同内容重试保持幂等）</p>
+<p><strong>其他</strong>
+- vite dev 默认代理端口 8001→8020
+- 升级/重启操作步骤文档化</p>
+<h2>v1.1.1（2026-09-05）— 上线前必备修复</h2>
+<p><strong>修复</strong>
+- 二次人工复核不再 409 死锁（复核请求幂等键加入轮次分量）
+- 任务转移去重以"最近一次转移"为准（换人重转不再误判冲突）
+<strong>安全</strong>
+- 新增"悬空任务"告警：归属无执行者且 30 分钟无进展 → 审计+通知一条（不再静默挂起）</p>
+<h2>v1.1（2026-09-05）— 上线前走查 P0 修复 + 真人复核</h2>
+<p><strong>安全</strong>
+- PATCH 不能再直接置任务 completed（只能复核通过/审批通过触发）
+- 对象级隔离：跨账号按 project/task 读/写全部拒绝（403/404），不再只看列表层
+- 交付物 file_ref 沙箱：仅限 artifacts 目录，绝对路径/目录穿越拒绝（阻断任意服务端文件读取）
+<strong>新增</strong>
+- 真人账号可被指派为 reviewer 并完成复核；项目 owner 可复核自己项目（单用户闭环）
+<strong>修复</strong>
+- 复核打回（需修改/拒绝）必须填写修改意见，防"盲改"
+- 前端：复核按钮按权限显隐、打回意见输入框、登录/操作可用（dev 代理可配置）
+<strong>其他</strong>
+- Windows 版改 onefile 单文件 + 无黑窗启动；mac 签名/公证脚本健壮化（暂存目录/编码）；官网 logo 上线</p>
+<h2>v1.0 及之前（2026-08～09 开发期，要点）</h2>
+<ul>
+<li>Agent 团队操作系统：目标解析拆解、分工、执行、复核闭环、审计（多轮试用迭代）</li>
+<li>9/3 批修复：返工/二次复核闭环、复核意见驱动重做、打回≥3 次保险丝、幂等落盘、转移冲突/resend、依赖链串行开工、证据字段服务端核算</li>
+<li>多用户隔离（列表层）、注册/登录、事件溯源审计</li>
+<li>macOS 签名 + 公证分发（Developer ID、官网直发）</li>
+</ul></div></body></html>
