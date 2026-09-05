@@ -29,7 +29,7 @@ def _produce(executor: str, task: TaskContext) -> dict:
         if r.status != "done":
             raise RuntimeError(f"claude_sdk 执行失败: {r.error}")
         content = r.output
-        file_ref = f"artifacts/{task.task_id}.md"
+        file_ref = f"{task.task_id}.md"
         (artifacts / f"{task.task_id}.md").write_text(content, encoding="utf-8")
         return {"file_ref": file_ref, "summary": f"已产出《{task.title}》交付文档", "content_len": len(content)}
     return BuiltinAgent().execute(task)

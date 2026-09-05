@@ -67,7 +67,7 @@ class BuiltinAgent:
             n += 1
             target = self._artifacts / f"{task.task_id}.retry{n}.md"
         target.write_text(content, encoding="utf-8")
-        file_ref = f"artifacts/{target.name}"
+        file_ref = target.name
         return {"file_ref": file_ref, "summary": f"已产出《{task.title}》交付文档"
                 + (f"（第{n+1}稿）" if n else ""),
                 "content_len": len(content), "usage": self._llm.usage()}

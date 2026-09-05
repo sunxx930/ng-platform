@@ -546,7 +546,7 @@ def test_builtin_agent_executes(tmp_path):
     agent = BuiltinAgent(llm=_FakeLLM(), artifacts_dir=tmp_path / "artifacts")
     r = agent.execute(TaskContext(task_id="t1", title="写周报",
                                   description="写份周报", deliverables=["docs/week.md"]))
-    assert r["file_ref"] == "artifacts/t1.md"
+    assert r["file_ref"] == "t1.md"   # v1.1.2 契约：裸名（resolve_artifact 收口 artifacts 根，自动剥旧前缀兼容）
     assert r["content_len"] > 0
     assert (tmp_path / "artifacts" / "t1.md").exists()
     assert "交付文档" in (tmp_path / "artifacts" / "t1.md").read_text(encoding="utf-8")
