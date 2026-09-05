@@ -44,7 +44,48 @@ app = FastAPI(title="NG AI Platform", version="0.1.0")
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    from app.version import VERSION
+    return {"status": "ok", "version": VERSION}
+
+
+@app.get("/version")
+def app_version(auth: dict = Depends(require_auth)):
+    """当前应用版本（升级模式 A：前端展示 + 检查更新用）。"""
+    from app.version import VERSION
+    return {"version": VERSION}
+
+
+@app.get("/update/check")
+def update_check(auth: dict = Depends(require_auth)):
+    """检查官网是否有新版本（类 openclaw 升级模式 A）。
+
+    服务端拉取 https://ng-platform.ai/version.json 对比；失败返回 update=false
+    与原因（离线/网络），不打扰用户主流程。
+    """
+    import json as _json
+    import urllib.request
+    from app.version import VERSION, VERSION_JSON_URL, DEFAULT_RELEASE_URL
+
+    def _cmp(a: str, b: str) -> int:
+        def nums(v):
+            return [int(x) for x in v.split("-")[0].split(".")]
+        aa, bb = nums(a), nums(b)
+        for x, y in zip(aa, bb):
+            if x != y:
+                return (x > y) - (x < y)
+        return (len(aa) > len(bb)) - (len(aa) < len(bb))
+
+    try:
+        with urllib.request.urlopen(VERSION_JSON_URL, timeout=6) as r:
+            remote = _json.loads(r.read().decode("utf-8"))
+        latest = str(remote.get("version", ""))
+        download = str(remote.get("download_url") or DEFAULT_RELEASE_URL)
+    except Exception as e:   # 离线/网络/解析失败 → 不误报
+        return {"current": VERSION, "update": False,
+                "reason": f"检查更新不可用: {type(e).__name__}"}
+    return {"current": VERSION, "latest": latest,
+            "update": bool(latest) and _cmp(latest, VERSION) > 0,
+            "download_url": download}
 
 
 @app.get("/auth/me")

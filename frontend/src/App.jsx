@@ -167,12 +167,33 @@ function App() {
   const canL3 = (session?.level || 0) >= 3
   const authed = !!session?.token
   const [opinions, setOpinions] = useState({})   // v1.1：打回修改意见（复核需填）
+  const [ver, setVer] = useState('')             // v1.2(A)：当前版本 + 检查更新
 
   // 会话校验：token 无效/过期 → 清会话回登录页
   useEffect(() => {
     if (!authed) return
     api('/auth/me', token).catch(() => { localStorage.removeItem('ng_session'); setSession(null) })
   }, [authed, token])
+
+  // v1.2(A)：加载当前版本
+  useEffect(() => {
+    if (!authed) return
+    api('/version', token).then((d) => setVer(d.version || '')).catch(() => {})
+  }, [authed, token])
+
+  function checkUpdate() {
+    api('/update/check', token)
+      .then((d) => {
+        if (d.update) {
+          if (window.confirm(`发现新版本 v${d.latest}（当前 v${d.current}），去官网下载？`)) {
+            window.open(d.download_url || '#download', '_blank')
+          }
+        } else {
+          showToast(`已是最新版本 v${d.current || ver}${d.reason ? `（${d.reason}）` : ''}`)
+        }
+      })
+      .catch((e) => setError('检查更新失败：' + errMsg(e)))
+  }
 
   function loadProjects() {
     api('/projects', token).then((d) => { setProjects(d.projects || []); setError('') }).catch((e) => setError(errMsg(e)))
@@ -346,6 +367,8 @@ function App() {
         <div className="toolbar">
           <span className="who">👤 {session.username}</span>
           <span className={`level-badge l${session.level}`}>L{session.level}</span>
+          {ver && <span className="muted version-badge" data-testid="app-version">v{ver}</span>}
+          <button className="mini" data-testid="check-update" onClick={checkUpdate} title="检查官网是否有新版本">↻ 更新</button>
           <div className="notif-wrap">
             <button className="notif-btn" data-testid="notif-bell"
                     onClick={() => { setShowNotifs(!showNotifs); refreshNotifs() }}
