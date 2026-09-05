@@ -43,8 +43,12 @@ TOKENS = resolve_tokens(dict(os.environ))
 # 测试模式（2026-09-02）：NG_DEMO_TOKEN 注入后加入静态 token 表，供测试 agent 免注册直通。
 # 2026-09-03 升级：NG_DEMO_MODE=1 时，任意 `demo-` 前缀 token 动态放行并派生独立 user_id，
 # 每个试用者用不同 token → 各自隔离（复用多用户隔离逻辑），不再共享全见。
-_DEMO_TOKEN = os.environ.get("NG_DEMO_TOKEN", "").strip()
-_DEMO_MODE = os.environ.get("NG_DEMO_MODE", "").strip().lower() in {"1", "true", "yes"}
+# v1.2.1 硬守卫：NG_ENV=production 时**强制禁用 demo**（无论 NG_DEMO_MODE/NG_DEMO_TOKEN 是否设），
+# 杜绝生产误开 demo → L3 代审无痕/越权。compose 已 NG_ENV=production，这是代码层最后一道闸。
+_PRODUCTION = os.environ.get("NG_ENV", "").strip().lower() == "production"
+_DEMO_TOKEN = "" if _PRODUCTION else os.environ.get("NG_DEMO_TOKEN", "").strip()
+_DEMO_MODE = (not _PRODUCTION) and \
+    os.environ.get("NG_DEMO_MODE", "").strip().lower() in {"1", "true", "yes"}
 if _DEMO_TOKEN and _DEMO_TOKEN not in TOKENS:
     TOKENS[_DEMO_TOKEN] = ("demo-admin", 3)
 

@@ -216,6 +216,30 @@ def test_numeric_task_autocheck(client, monkeypatch, tmp_path):
     assert rr2.get("verdict") == "SKIP"
 
 
+# ---------- v1.2.1：demo 生产硬守卫 ----------
+def test_demo_disabled_in_production(monkeypatch):
+    import importlib
+    import app.security.auth as a
+    monkeypatch.setenv("NG_ENV", "production")
+    monkeypatch.setenv("NG_LEVEL1_TOKEN", "prod-strong-l1-abcdef")
+    monkeypatch.setenv("NG_LEVEL3_TOKEN", "prod-strong-l3-abcdef")
+    monkeypatch.setenv("NG_DEMO_MODE", "1")
+    monkeypatch.setenv("NG_DEMO_TOKEN", "demo-x-hardguard")
+    importlib.reload(a)
+    try:
+        assert a._DEMO_MODE is False, "production 下 NG_DEMO_MODE 应失效"
+        assert a._DEMO_TOKEN == "", "production 下 NG_DEMO_TOKEN 应失效"
+        assert "demo-x-hardguard" not in a.TOKENS
+        assert "prod-strong-l3-abcdef" in a.TOKENS
+    finally:
+        monkeypatch.delenv("NG_ENV", raising=False)
+        monkeypatch.delenv("NG_DEMO_MODE", raising=False)
+        monkeypatch.delenv("NG_DEMO_TOKEN", raising=False)
+        monkeypatch.delenv("NG_LEVEL1_TOKEN", raising=False)
+        monkeypatch.delenv("NG_LEVEL3_TOKEN", raising=False)
+        importlib.reload(a)   # 还原非生产 dev 态
+
+
 # ---------- 真人账号可被指派 reviewer（方案 b） ----------
 def test_real_user_assigned_reviewer_can_decide(client):
     to, uname, _ = _reg(client, "owner")
