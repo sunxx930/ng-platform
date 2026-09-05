@@ -265,6 +265,8 @@ _NOTIFY_EVENTS = {
     events.EventType.TASK_STATE_CHANGED.value,
     events.EventType.REVIEW_DECIDED.value,
     events.EventType.APPROVAL_DECIDED.value,
+    events.EventType.AGENT_EXECUTION_FAILED.value,
+    events.EventType.TASK_STALLED.value,     # v1.1.1：悬空任务要能通知到人
 }
 
 
@@ -1047,9 +1049,10 @@ def request_review(tid: str, auth: dict = Depends(require_auth)):
         if pending:
             return {"review_id": pending, "task_id": tid}
     rid = str(uuid.uuid4())
+    # 幂等键带轮次分量（rid[:8]）：同任务二次人工复核走新 key，不再 409 死锁
     log.append(events.new_event(
         events.EventType.REVIEW_REQUESTED, "system", {"review_id": rid},
-        project_id=pid, task_id=tid, idempotency_key=f"review:req:{tid}"))
+        project_id=pid, task_id=tid, idempotency_key=f"review:req:{tid}:{rid[:8]}"))
     return {"review_id": rid, "task_id": tid}
 
 
@@ -1282,10 +1285,13 @@ def agent_transfer(req: TransferIn, auth: dict = Depends(require_auth)):
     """
     require_level("send_handover", auth["level"])
     _require_project_access(req.project_id, auth)
-    # 汇总v1.2 ⑥（2026-09-03）：任务级转移去重——防重复转移单。
+    # 汇总v1.2 ⑥（2026-09-03）+ v1.1.1（2026-09-05）：任务级转移去重——防重复转移单。
     # 同任务已转给【不同 agent】再转 → 409（需 resend）；同 agent 幂等走 openclaw dedup。
-    prior = next((e for e in log.replay(task_id=req.task_id)
-                  if e["event_type"] == events.EventType.AGENT_TRANSFERRED.value), None)
+    # 博士 P2-1：去重基准取【最近一次】转移（不是最早）——resend 换人后再转当前 agent 不再误 409。
+    prior = None
+    for e in log.replay(task_id=req.task_id):
+        if e["event_type"] == events.EventType.AGENT_TRANSFERRED.value:
+            prior = e   # 覆盖式：循环到末尾即最近一次转移
     if prior and prior["payload"].get("agent_id") != req.agent_id \
             and not (req.payload or {}).get("resend"):
         raise HTTPException(

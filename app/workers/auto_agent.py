@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 import uuid
 
 from app.agents.builtin import AGENT_NAME, BuiltinAgent, TaskContext
@@ -59,7 +60,10 @@ class AutoAgentWorker(Worker):
         if ctx["has_deliverable"] and not rework:
             return
         if ctx["owner"] is None or not self._is_builtin(ctx["owner"]):
-            return   # 只自动执行 NG 自研 builtin agent 的任务
+            # 只自动执行 builtin 任务；非 builtin（owner 失配/人工/外接）不进则发悬空告警，
+            # 避免"owner_agent 显示名/注册名失配 → 静默挂起 30+ 分钟零告警"
+            self._maybe_mark_stalled(tid, ctx)
+            return
         if not self.acquire_lease(tid):
             return
         try:
@@ -87,6 +91,39 @@ class AutoAgentWorker(Worker):
                     and e["payload"].get("name") == owner:
                 found = e["payload"].get("executor", "builtin")
         return found == "builtin" if found is not None else False
+
+    _STALL_S = 1800   # 30 分钟无进展判悬空
+
+    def _maybe_mark_stalled(self, tid: str, ctx: dict):
+        """in_progress 且无人执行（owner 非 builtin/空）+ 30 分钟无心跳 → 发一次 task.stalled。
+
+        外接 openclaw 任务（有 handover/transferred）或已 stalled 过的不重复告警。
+        """
+        evs = self._log.replay(task_id=tid)
+        now = time.time()
+        last_act = 0.0
+        external = False
+        already = False
+        for e in evs:
+            if e["event_type"] in (events.EventType.AGENT_HEARTBEAT.value,
+                                   events.EventType.TASK_STATE_CHANGED.value):
+                last_act = max(last_act, e.get("created_at_ts") or 0)
+            if e["event_type"] in (events.EventType.HANDOVER_CREATED.value,
+                                   events.EventType.AGENT_TRANSFERRED.value):
+                external = True
+            if e["event_type"] == events.EventType.TASK_STALLED.value:
+                already = True
+        if already or external or now - last_act < self._STALL_S:
+            return
+        try:
+            self._log.append(events.new_event(
+                events.EventType.TASK_STALLED, "auto_agent",
+                {"owner": ctx.get("owner"), "reason": "归属无 builtin 执行者且长时间无进展"},
+                project_id=ctx.get("project_id"), task_id=tid,
+                idempotency_key=f"stalled:{tid}"))
+            print(f"[auto_agent] 悬空任务告警: {tid} owner={ctx.get('owner')}", flush=True)
+        except Exception:   # 幂等冲突等忽略，不打断 tick
+            pass
 
     def _project_goal(self, pid) -> str:
         """项目目标（project.created 的 goal）。"""

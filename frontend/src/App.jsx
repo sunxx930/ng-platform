@@ -5,6 +5,7 @@ const EVENT_LABEL = {
   'project.created': '创建项目', 'task.created': '创建任务', 'task.state_changed': '状态流转',
   'deliverable.submitted': '提交产出', 'review.requested': '请求复核', 'review.decided': '复核结论',
   'approval.requested': '请求审批', 'approval.decided': '审批决策', 'agent.assigned': '指派 Agent',
+  'task.stalled': '悬空告警', 'agent.execution_failed': '执行失败',
   'agent.transferred': '转移任务', 'agent.registered': '注册 Agent', 'goal.parsed': '解析需求',
   'message.aggregated': '收到消息', 'feedback.submitted': '收到反馈', 'project.paused': '项目暂停',
   'project.archived': '项目终止',
