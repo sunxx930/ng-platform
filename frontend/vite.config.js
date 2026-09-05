@@ -8,7 +8,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8001',   // ng-platform 后端（8000 被 ssh 隧道占用）
+        target: process.env.NG_API_TARGET || 'http://localhost:8001',  // 后端端口可用 NG_API_TARGET 覆盖
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },

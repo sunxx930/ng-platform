@@ -209,6 +209,36 @@ def _task_project_id(tid: str) -> str | None:
     return _derive_task_project(log.replay(task_id=tid))
 
 
+def _project_owner_id(pid: str):
+    """项目 owner = 首个 PROJECT_CREATED 的 user_id（事件正源）。查不到→None。"""
+    for e in log.replay(project_id=pid):
+        if e["event_type"] == events.EventType.PROJECT_CREATED.value:
+            return e.get("user_id")
+    return None
+
+
+def _require_project_access(pid: str, auth: dict):
+    """P0-2 对象级隔离：注册用户仅能访问【自己创建】的项目；
+    服务器端静态 token（user_id=None，管理员/agent 通道）放行。
+    与列表层 owner 过滤同口径（_derive_project_list / Projector.get_projects）。"""
+    uid = auth.get("user_id")
+    if uid is None:
+        return
+    owner = _project_owner_id(pid)
+    if owner is None:
+        raise HTTPException(404, "project not found")
+    if owner != uid:
+        raise HTTPException(403, "无权访问该项目")
+
+
+def _require_task_access(tid: str, auth: dict):
+    """任务级隔离：先解析所属项目再走项目 owner 校验。任务不存在→404。"""
+    pid = _task_project_id(tid)
+    if pid is None:
+        raise HTTPException(404, "task not found")
+    _require_project_access(pid, auth)
+
+
 def _derive_task_context(events_iter, task_id) -> dict:
     """replay 纯函数：任务上下文，形状与 Projector.get_task_context 一致。"""
     ctx: dict = {"task_id": task_id, "title": "", "description": "",
@@ -311,13 +341,15 @@ def list_projects(auth: dict = Depends(require_auth)):
         projects = log.projector.get_projects(viewer)
     else:
         projects = _derive_project_list(log.replay(), viewer)
-    return {"projects": projects}
+    # v1.1：前端复核按钮按权限显隐——列表已 owner 过滤，可见项目对 viewer 均 is_owner
+    return {"projects": [{**p, "is_owner": True} for p in projects]}
 
 
 @app.post("/projects/{pid}/archive")
 def archive_project(pid: str, auth: dict = Depends(require_auth)):
     """终止/删除项目：使用者（owner，L1）随时有权。从看板移除，事件留审计（append-only）。"""
     require_level("read_project", auth["level"])   # L1：owner 随时可终止/删除
+    _require_project_access(pid, auth)
     if _db_mode():
         if not log.projector.project_exists(pid):
             raise HTTPException(404, "project not found")
@@ -335,6 +367,7 @@ def archive_project(pid: str, auth: dict = Depends(require_auth)):
 def list_tasks(pid: str, auth: dict = Depends(require_auth)):
     """项目任务看板数据（从事件推导：title/status/owner/reviewer/has_deliverable）。"""
     require_level("read_project", auth["level"])
+    _require_project_access(pid, auth)
     if _db_mode():
         tasks = log.projector.get_tasks(pid)
         if not log.projector.project_exists(pid):
@@ -349,6 +382,7 @@ def list_tasks(pid: str, auth: dict = Depends(require_auth)):
 
 @app.get("/projects/{pid}/context")
 def project_context(pid: str, auth: dict = Depends(require_auth)):
+    _require_project_access(pid, auth)
     evs = log.replay(project_id=pid)
     if not evs:
         raise HTTPException(404, "project not found")
@@ -359,6 +393,7 @@ def project_context(pid: str, auth: dict = Depends(require_auth)):
 
 @app.post("/projects/{pid}/pause")
 def pause_project(pid: str, auth: dict = Depends(require_auth)):
+    _require_project_access(pid, auth)
     # 权限：暂停需 L3
     if int(auth["level"]) < int(perm.Level.L3_FLOW):
         raise HTTPException(403, "权限不足: pause_project 需 L3_FLOW")
@@ -373,6 +408,7 @@ def pause_project(pid: str, auth: dict = Depends(require_auth)):
 def audit(pid: str, task_id: Optional[str] = Query(default=None), auth: dict = Depends(require_auth)):
     """审计回放。项目不存在 → 404（与 list_tasks 一致，复核 2026-09-02 顺手项）。"""
     require_level("read_project", auth["level"])
+    _require_project_access(pid, auth)
     if _db_mode():
         if not log.projector.project_exists(pid):
             raise HTTPException(404, "project not found")
@@ -444,6 +480,7 @@ def _parse_and_create(pid: str, goal: str) -> list[dict]:
 def post_message(pid: str, body: str, parse: bool = False,
                  auth: dict = Depends(require_auth)):
     """写入用户消息。parse=true → 视为项目目标，走需求解析 + 团队匹配 + 自动建任务。"""
+    _require_project_access(pid, auth)
     mid = str(uuid.uuid4())
     log.append(events.new_event(
         events.EventType.MESSAGE_AGGREGATED, "user",
@@ -733,6 +770,7 @@ def create_task(pid: str, title: str, description: str = "",
                 owner_agent: Optional[str] = None, deadline_ts: Optional[float] = None,
                 depends_on: Optional[str] = None,   # 依赖的任务id/title（逗号分隔，可选）
                 auth: dict = Depends(require_auth)):
+    _require_project_access(pid, auth)
     tid = str(uuid.uuid4())
     deps = []
     if depends_on:
@@ -764,6 +802,7 @@ def task_context(tid: str, auth: dict = Depends(require_auth)):
     DB 投影模式走 tasks 投影行（含 expected_version），行缺失回退 replay（孤儿任务）。
     """
     require_level("read_project", auth["level"])
+    _require_task_access(tid, auth)
     if _db_mode():
         ctx = log.projector.get_task_context(tid)
         if ctx is None:
@@ -794,6 +833,7 @@ def change_state(tid: str, to: TaskStatus, actor: str = "system",
     幂等语义不变：同状态重试 200；同幂等键不同意图 409。
     """
     require_level("change_task_state", auth["level"])
+    _require_task_access(tid, auth)
     if _db_mode():
         row = log.projector.get_task_row(tid)
         if row is None:
@@ -811,6 +851,10 @@ def change_state(tid: str, to: TaskStatus, actor: str = "system",
         # 幂等优先：同状态重试 → 200（不判非法转移）
         if state == to:
             return {"task_id": tid, "status": to.value, "idempotent": True}
+        # P0-1：PATCH 禁直达终态 completed——只能由复核通过/审批通过事件触发
+        if to == TaskStatus.COMPLETED:
+            raise HTTPException(
+                400, "completed 只能由复核通过/审批通过触发；请走复核或审批")
         # 状态机校验：非法转移 400（先 400 后 409，非法不报成并发冲突）
         try:
             new = transition(state, to)
@@ -844,6 +888,10 @@ def change_state(tid: str, to: TaskStatus, actor: str = "system",
             state = TaskStatus(e["payload"]["to"])
     if state == to:
         return {"task_id": tid, "status": to.value, "idempotent": True}
+    # P0-1：PATCH 禁直达终态 completed（与 DB 分支一致）
+    if to == TaskStatus.COMPLETED:
+        raise HTTPException(
+            400, "completed 只能由复核通过/审批通过触发；请走复核或审批")
     try:
         new = transition(state, to)
     except InvalidTransition as ex:
@@ -895,6 +943,7 @@ def submit_deliverable(tid: str, file_ref: str,
     verdict=blocked → 自动推进 blocked。幂等键绑定内容（P1 内容寻址）：同内容重试幂等。
     """
     require_level("submit_deliverable", auth["level"])
+    _require_task_access(tid, auth)
     project_id = _task_project_id(tid)
     if project_id is None:
         raise HTTPException(404, "task not found")
@@ -966,6 +1015,7 @@ def submit_deliverable(tid: str, file_ref: str,
 def task_heartbeat(tid: str, agent: str = "agent", auth: dict = Depends(require_auth)):
     """Agent 心跳：更新任务活跃状态（F1：让 HeartbeatWorker 有据可依）。"""
     require_level("change_task_state", auth["level"])
+    _require_task_access(tid, auth)
     project_id = _task_project_id(tid)
     log.append(events.new_event(
         events.EventType.AGENT_HEARTBEAT, agent, {},
@@ -979,6 +1029,7 @@ def task_heartbeat(tid: str, agent: str = "agent", auth: dict = Depends(require_
 def request_review(tid: str, auth: dict = Depends(require_auth)):
     """创建复核请求（绑定任务，返回 review_id）。"""
     require_level("change_task_state", auth["level"])
+    _require_task_access(tid, auth)
     pid = _task_project_id(tid)
     if pid is None:
         raise HTTPException(404, "task not found")   # 对象绑定
@@ -1016,19 +1067,36 @@ def review_decision(rid: str, verdict: ReviewVerdict, opinion: str = "",
                 and e["payload"].get("review_id") == rid), None)
     if req is None:
         raise HTTPException(404, f"review {rid} 不存在")   # 拒绝任意 ID
-    # 试用汇总#4（2026-09-03）：reviewer 身份绑定——执行者须是任务指派的 reviewer
-    # 或 L3 管理员（L3 可代审，demo/静态 L3 token 放行）；普通注册用户非 reviewer 不可审。
+    # 打回(needs_changes/reject)必须带修改意见 opinion，防盲改（v1.1 UI 契约）
+    if verdict.value in ("needs_changes", "reject") and not opinion.strip():
+        raise HTTPException(400, f"{verdict.value} 必须填写修改意见 opinion")
+    # 复核放行（v1.1，P0-2 + 真人 reviewer 方案 b）：
+    #   L3（管理员/服务器） ∨ 服务器 token(user_id=None, agent/系统通道)
+    #   ∨ 项目 owner（修单用户闭环：auto 拆解把 reviewer 指成平台 agent，owner 仍可审）
+    #   ∨ 被指派的 reviewer（真人账号可被指派，用户名匹配）
     tid = req.get("task_id")
-    if tid and int(auth.get("level") or 0) < 3:
-        assigned_reviewer = None
+    pid_for = req.get("project_id")
+    if tid and not pid_for:
+        pid_for = _task_project_id(tid)
+    level = int(auth.get("level") or 0)
+    allowed = level >= 3 or auth.get("user_id") is None
+    if not allowed and pid_for:
+        owner = _project_owner_id(pid_for)
+        if owner is not None and auth.get("user_id") == owner:
+            allowed = True
+    assigned_reviewer = None
+    if tid:
         for e in evs:
             if e["event_type"] == events.EventType.AGENT_ASSIGNED.value \
                     and e.get("task_id") == tid \
                     and e["payload"].get("role", "owner") == "reviewer":
                 assigned_reviewer = e["payload"].get("agent")
-        if assigned_reviewer and auth["user"] != assigned_reviewer:
-            raise HTTPException(403,
-                f"复核权限不足：任务指派复核人为 {assigned_reviewer}，你不是该任务的 reviewer（或需 L3）")
+        if not allowed and assigned_reviewer and auth["user"] == assigned_reviewer:
+            allowed = True
+    if not allowed:
+        raise HTTPException(403,
+            f"复核权限不足：任务指派复核人为 {assigned_reviewer or '未指派'}；"
+            f"需项目 owner、被指派 reviewer（真人）或 L3")
     log.append(events.new_event(
         events.EventType.REVIEW_DECIDED, "reviewer",
         {"review_id": rid, "verdict": verdict.value,
@@ -1077,6 +1145,7 @@ def _apply_review_outcome(tid: str, pid: str | None, verdict: ReviewVerdict,
 def request_approval(tid: str, scope: str = "flow_change", auth: dict = Depends(require_auth)):
     """创建审批请求（绑定任务，需 L3）。"""
     require_level("approve_action", auth["level"])
+    _require_task_access(tid, auth)
     pid = _task_project_id(tid)
     if pid is None:
         raise HTTPException(404, "task not found")
@@ -1126,13 +1195,15 @@ def _ensure_approval_requested(tid: str, pid: str | None):
 
 
 def _deliverable_evidence(file_ref: str) -> dict:
-    """产出证据（龙虾反馈阻塞#4，2026-09-02）：验证 file_ref 指向的文件是否存在，
-    存在则存内容长度/哈希/预览；不存在则标记 file_missing（不卡死流程但能看出没真文件）。"""
-    from pathlib import Path
-    p = Path(file_ref)
-    if not p.is_absolute():
-        p = Path.cwd() / p
-    if not p.exists():
+    """产出证据（龙虾反馈阻塞#4 + P0-3，2026-09-02/09-05）：
+    file_ref 仅允许 artifacts 目录内相对路径（沙箱解析），
+    存在则存内容长度/哈希/预览；缺失标记 file_missing；越界/绝对路径 → 403。"""
+    from app.storage.artifacts import resolve_artifact
+    try:
+        p = resolve_artifact(file_ref)
+    except PermissionError as ex:
+        raise HTTPException(403, f"file_ref 非法：{ex}")
+    except FileNotFoundError:
         return {"file_missing": True, "note": f"file_ref={file_ref} 未找到对应文件"}
     try:
         content = p.read_text(encoding="utf-8", errors="replace")
@@ -1210,6 +1281,7 @@ def agent_transfer(req: TransferIn, auth: dict = Depends(require_auth)):
     缺失时平台其余功能（解析/执行/复核/审计）照常运行。
     """
     require_level("send_handover", auth["level"])
+    _require_project_access(req.project_id, auth)
     # 汇总v1.2 ⑥（2026-09-03）：任务级转移去重——防重复转移单。
     # 同任务已转给【不同 agent】再转 → 409（需 resend）；同 agent 幂等走 openclaw dedup。
     prior = next((e for e in log.replay(task_id=req.task_id)

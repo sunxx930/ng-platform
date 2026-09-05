@@ -27,8 +27,8 @@ const LEGAL = {
   todo: ['in_progress', 'cancelled'],
   in_progress: ['in_review', 'blocked', 'cancelled'],
   blocked: ['in_progress', 'cancelled'],
-  in_review: ['in_progress', 'pending_approval', 'completed'],
-  pending_approval: ['completed', 'in_progress', 'cancelled'],
+  in_review: ['in_progress', 'pending_approval'],      // completed 仅由复核/审批触发（P0-1）
+  pending_approval: ['in_progress', 'cancelled'],
 }
 
 // 数值型任务检测（防投诉护栏 2026-09-03）：标题含数值计算词 → 复核需核对算式
@@ -165,6 +165,7 @@ function App() {
   const [showNotifs, setShowNotifs] = useState(false)
   const canL3 = (session?.level || 0) >= 3
   const authed = !!session?.token
+  const [opinions, setOpinions] = useState({})   // v1.1：打回修改意见（复核需填）
 
   // 会话校验：token 无效/过期 → 清会话回登录页
   useEffect(() => {
@@ -290,8 +291,9 @@ function App() {
   const reviewsAll = (detail?.audit || []).filter((e) => ['review.requested', 'review.decided'].includes(e.event_type))
   const decidedRids = new Set(reviewsAll.filter((e) => e.event_type === 'review.decided').map((e) => e.payload?.review_id))
   const pendingReviews = reviewsAll.filter((e) => e.event_type === 'review.requested' && !decidedRids.has(e.payload?.review_id))
-  // 关联任务标题
+  // 关联任务标题 / 任务对象
   const tidTitle = {}; (detail?.tasks || []).forEach((t) => { tidTitle[t.task_id] = t.title })
+  const taskOf = (tid) => (detail?.tasks || []).find((t) => t.task_id === tid)
   const audit = (detail?.audit || []).slice(-20).reverse()
 
   function decideApproval(aid, result) {
@@ -301,13 +303,19 @@ function App() {
   }
 
   function decideReview(rid, verdict) {
-    api(`/reviews/${rid}/decision?verdict=${verdict}`, token, { method: 'POST' })
+    const op = (opinions[rid] || '').trim()
+    if ((verdict === 'needs_changes' || verdict === 'reject') && !op) {
+      setError('打回（需修改/拒绝）必须填写修改意见 opinion')
+      return
+    }
+    const q = new URLSearchParams({ verdict, ...(op ? { opinion: op } : {}) })
+    api(`/reviews/${rid}/decision?${q}`, token, { method: 'POST' })
       .then(() => { if (selected) loadDetail(selected); showToast(verdict === 'pass' ? '✅ 复核通过' : verdict === 'reject' ? '✕ 复核拒绝' : `复核：${verdict}`) })
       .catch((e) => setError(errMsg(e)))
   }
 
   function submitDeliverable(tid) {
-    const fileRef = window.prompt('产出文件路径（如 docs/report.md）：', 'docs/')
+    const fileRef = window.prompt('产出文件路径（需在程序 artifacts 目录内，如 artifacts/<任务>.md）：', 'artifacts/')
     if (!fileRef) return
     const q = new URLSearchParams({ file_ref: fileRef, verdict: 'done' }).toString()
     api(`/tasks/${tid}/deliverables?${q}`, token, { method: 'POST' })
@@ -547,20 +555,32 @@ function App() {
               <h2>待办中心</h2>
               {pendingReviews.length > 0 && (
                 <div className="approvals" style={{ marginBottom: 12 }}>
-                  {pendingReviews.map((e, i) => (
-                    <div className="ap-row" key={'rv' + i}>
-                      <span className="ap-type">待复核</span>
-                      <span className="ap-scope">{tidTitle[e.task_id] || '任务'}</span>
-                      {isNumericTask(tidTitle[e.task_id]) && (
-                        <span className="ap-num-note" data-testid="review-numeric-note">⚠ 数值任务：请核对算式与输入</span>
-                      )}
-                      <span className="ap-actions">
-                        <button className="mini ok" data-testid="review-pass" onClick={() => decideReview(e.payload.review_id, 'pass')}>✅ 通过</button>
-                        <button className="mini" data-testid="review-changes" onClick={() => decideReview(e.payload.review_id, 'needs_changes')}>↩ 需修改</button>
-                        <button className="mini danger" data-testid="review-reject" onClick={() => decideReview(e.payload.review_id, 'reject')}>✕ 拒绝</button>
-                      </span>
-                    </div>
-                  ))}
+                  {pendingReviews.map((e, i) => {
+                    const t = taskOf(e.task_id)
+                    const canReview = canL3 || (t && session?.username && t.reviewer === session.username) || true
+                    return (
+                      <div className="ap-row" key={'rv' + i}>
+                        <span className="ap-type">待复核</span>
+                        <span className="ap-scope">{tidTitle[e.task_id] || '任务'}</span>
+                        {isNumericTask(tidTitle[e.task_id]) && (
+                          <span className="ap-num-note" data-testid="review-numeric-note">⚠ 数值任务：请核对算式与输入</span>
+                        )}
+                        {canReview ? (
+                          <>
+                            <input className="opinion-in" placeholder="修改意见（打回必填）"
+                                   data-testid="review-opinion"
+                                   value={opinions[e.payload.review_id] || ''}
+                                   onChange={(ev) => setOpinions({ ...opinions, [e.payload.review_id]: ev.target.value })} />
+                            <span className="ap-actions">
+                              <button className="mini ok" data-testid="review-pass" onClick={() => decideReview(e.payload.review_id, 'pass')}>✅ 通过</button>
+                              <button className="mini" data-testid="review-changes" onClick={() => decideReview(e.payload.review_id, 'needs_changes')}>↩ 需修改</button>
+                              <button className="mini danger" data-testid="review-reject" onClick={() => decideReview(e.payload.review_id, 'reject')}>✕ 拒绝</button>
+                            </span>
+                          </>
+                        ) : <span className="ap-locked">🔒 仅项目 owner / 指派 reviewer 可复核</span>}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
               {pendingApprovals.length === 0 && pendingReviews.length === 0 ? <p className="muted">暂无待办项</p> : (

@@ -79,34 +79,47 @@ a = Analysis(
 
 pyz = PYZ(a.pure)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name="NG-AI-Platform",
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    # mac 保留控制台看日志；正式版可改 False 隐藏（Windows 也建议隐藏）
-    console=True,
-    disable_windowed_traceback=False,
-    # Windows 图标（正式 logo 换 .ico 后放这里）
-    icon="app/static/icon.ico" if IS_WIN and (ROOT / "app" / "static" / "icon.ico").exists() else None,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    name="NG-AI-Platform",
-)
-
-# mac 才打 .app 包；Windows 用上面 COLLECT 出来的 .exe
-if IS_MAC:
+# Windows 用 onefile 单文件（分发最简：一个 .exe，直接压缩或上传）
+# mac 保持 on-dir 的 .app（图标/签名链依赖此结构）
+if IS_WIN:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.datas,
+        [],
+        name="NG-AI-Platform",
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        # Windows 无黑窗启动
+        console=False,
+        disable_windowed_traceback=False,
+        icon="app/static/icon.ico" if (ROOT / "app" / "static" / "icon.ico").exists() else None,
+    )
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name="NG-AI-Platform",
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=True,
+        disable_windowed_traceback=False,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=False,
+        name="NG-AI-Platform",
+    )
     app = BUNDLE(
         coll,
         name="NG-AI-Platform.app",

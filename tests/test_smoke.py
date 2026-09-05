@@ -40,12 +40,14 @@ def _task(c, pid, **kw):
 def test_state_machine_whitelist(client):
     pid = _project(client)
     tid = _task(client, pid)
-    for to in ["in_progress", "in_review", "pending_approval", "completed"]:
+    # 非终态推进合法
+    for to in ["in_progress", "in_review", "pending_approval"]:
         r = client.patch(f"/tasks/{tid}/state", headers=H1, params={"to": to})
         assert r.status_code == 200, f"{to} 应合法"
-    # 终态无出边：completed 不能再转
-    r = client.patch(f"/tasks/{tid}/state", headers=H1, params={"to": "in_progress"})
+    # P0-1：PATCH 不能直达 completed（只能由复核/审批事件触发）
+    r = client.patch(f"/tasks/{tid}/state", headers=H1, params={"to": "completed"})
     assert r.status_code == 400
+    assert "completed" in r.json()["detail"]
 
 
 def test_permission_denied_403(client):
@@ -793,7 +795,7 @@ def test_review_needs_changes_returns_to_in_progress(client):
                 params={"file_ref": "docs/n.md", "verdict": "done"})  # → in_review
     rid = client.post(f"/tasks/{tid}/reviews", headers=H1).json()["review_id"]
     assert client.post(f"/reviews/{rid}/decision", headers=H3,
-                       params={"verdict": "needs_changes"}).status_code == 200
+                       params={"verdict": "needs_changes", "opinion": "表格口径需改正"}).status_code == 200
     ctx = client.get(f"/tasks/{tid}/context", headers=H1).json()
     assert ctx["status"] == "in_progress", f"needs_changes 应退回 in_progress，实际 {ctx['status']}"
 
@@ -807,7 +809,7 @@ def test_review_reject_returns_to_in_progress(client):
                 params={"file_ref": "docs/rj.md", "verdict": "done"})
     rid = client.post(f"/tasks/{tid}/reviews", headers=H1).json()["review_id"]
     assert client.post(f"/reviews/{rid}/decision", headers=H3,
-                       params={"verdict": "reject"}).status_code == 200
+                       params={"verdict": "reject", "opinion": "重新做，方向错了"}).status_code == 200
     ctx = client.get(f"/tasks/{tid}/context", headers=H1).json()
     assert ctx["status"] == "in_progress"
 
@@ -822,7 +824,7 @@ def test_rework_closed_loop_second_review(client):
                 params={"file_ref": "docs/v1.md", "verdict": "done"})
     rid1 = client.post(f"/tasks/{tid}/reviews", headers=H1).json()["review_id"]
     assert client.post(f"/reviews/{rid1}/decision", headers=H3,
-                       params={"verdict": "needs_changes"}).status_code == 200
+                       params={"verdict": "needs_changes", "opinion": "重交时补输入依据"}).status_code == 200
     # 打回 in_progress
     ctx = client.get(f"/tasks/{tid}/context", headers=H1).json()
     assert ctx["status"] == "in_progress", f"打回应回 in_progress，实际 {ctx['status']}"

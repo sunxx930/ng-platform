@@ -117,26 +117,20 @@ class AutoAgentWorker(Worker):
                         latest_fr = fr   # 覆盖式：循环到末尾即最新
             if latest_fr:
                 try:
-                    from pathlib import Path
-                    p = Path(latest_fr)
-                    if not p.is_absolute():
-                        p = Path.cwd() / p
-                    if p.exists():
-                        chunks.append(f"【上游任务最新产出 {latest_fr}】\n"
-                                      + p.read_text(encoding="utf-8", errors="replace")[:4000])
+                    from app.storage.artifacts import resolve_artifact
+                    p = resolve_artifact(latest_fr)   # P0-3：仅 artifacts 内相对路径
+                    chunks.append(f"【上游任务最新产出 {latest_fr}】\n"
+                                  + p.read_text(encoding="utf-8", errors="replace")[:4000])
                 except Exception:
                     pass
         return "\n\n".join(chunks)
 
     def _deliverable_evidence(self, file_ref: str) -> dict:
-        """产出证据（汇总 ⑤，2026-09-03）：与人工路径一致，读文件算内容长度/哈希/预览。"""
+        """产出证据（汇总 ⑤ + P0-3，2026-09-03/09-05）：与人工路径一致，
+        仅读 artifacts 目录内相对路径，算内容长度/哈希/预览。"""
         try:
-            from pathlib import Path
-            p = Path(file_ref)
-            if not p.is_absolute():
-                p = Path.cwd() / p
-            if not p.exists():
-                return {"file_missing": True, "note": f"file_ref={file_ref} 未找到"}
+            from app.storage.artifacts import resolve_artifact
+            p = resolve_artifact(file_ref)
             content = p.read_text(encoding="utf-8", errors="replace")
             return {"content_len": len(content),
                     "content_hash": hashlib.sha256(content.encode()).hexdigest()[:16],
