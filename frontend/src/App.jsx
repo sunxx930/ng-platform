@@ -24,6 +24,32 @@ function evSummary(e) {
   return map[e.event_type] || ''
 }
 
+// deliverable 展示优化（v1.2.1）：审计里的"产出"从文件名 → 完整交付信息+内容预览
+function DeliverableLine({ e }) {
+  const p = e.payload || {}
+  const fn = String(p.file_ref || '').split('/').pop()
+  const prev = String(p.preview || '')
+  const meta = []
+  if (p.version != null) meta.push(`第${p.version}稿`)
+  if (typeof p.content_len === 'number') meta.push(`${p.content_len} 字符`)
+  if (p.content_hash) meta.push(`#${p.content_hash}`)
+  if (p.verdict && p.verdict !== 'done') meta.push(`verdict=${p.verdict}`)
+  if (p.file_missing) meta.push('⚠ 文件缺失')
+  return (
+    <span className="ev-pay ev-deliv">
+      <span className="ev-deliv-main">📄 <b>{fn}</b>{meta.length ? ` · ${meta.join(' · ')}` : ''}</span>
+      {p.summary ? <span className="ev-deliv-sum"> — {p.summary}</span> : null}
+      {prev ? (
+        <span className="ev-deliv-prev" style={{ display: 'block', fontSize: '12px', opacity: 0.72, marginTop: 2 }}
+              title={prev.length > 120 ? prev : undefined}>
+          {prev.length > 120 ? `${prev.slice(0, 120)}…` : prev}
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
+
 const LEGAL = {
   todo: ['in_progress', 'cancelled'],
   in_progress: ['in_review', 'blocked', 'cancelled'],
@@ -168,6 +194,7 @@ function App() {
   const authed = !!session?.token
   const [opinions, setOpinions] = useState({})   // v1.1：打回修改意见（复核需填）
   const [ver, setVer] = useState('')             // v1.2(A)：当前版本 + 检查更新
+  const [recheck, setRecheck] = useState({})     // v1.2.1：数值任务自动复算结果(tid→{verdict,note})
 
   // 会话校验：token 无效/过期 → 清会话回登录页
   useEffect(() => {
@@ -317,6 +344,21 @@ function App() {
   const tidTitle = {}; (detail?.tasks || []).forEach((t) => { tidTitle[t.task_id] = t.title })
   const taskOf = (tid) => (detail?.tasks || []).find((t) => t.task_id === tid)
   const audit = (detail?.audit || []).slice(-20).reverse()
+
+  // v1.2.1：数值任务自动复算（打开看板自动跑一次，可重跑；best-effort 不阻塞）
+  function runRecheck(tid) {
+    api(`/tasks/${tid}/recheck`, token, { method: 'POST' })
+      .then((d) => setRecheck((m) => ({ ...m, [tid]: d })))
+      .catch(() => setRecheck((m) => ({ ...m, [tid]: { verdict: 'NA', note: '复算调用失败' } })))
+  }
+  useEffect(() => {
+    if (!detail) return
+    const nums = [...new Set(pendingReviews
+      .filter((e) => isNumericTask(tidTitle[e.task_id]))
+      .map((e) => e.task_id))]
+    nums.forEach((tid) => { if (!recheck[tid]) runRecheck(tid) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail])
 
   function decideApproval(aid, result) {
     api(`/approvals/${aid}/decision?result=${result}`, token, { method: 'POST' })
@@ -586,9 +628,20 @@ function App() {
                       <div className="ap-row" key={'rv' + i}>
                         <span className="ap-type">待复核</span>
                         <span className="ap-scope">{tidTitle[e.task_id] || '任务'}</span>
-                        {isNumericTask(tidTitle[e.task_id]) && (
-                          <span className="ap-num-note" data-testid="review-numeric-note">⚠ 数值任务：请核对算式与输入</span>
-                        )}
+                        {isNumericTask(tidTitle[e.task_id]) && (() => {
+                          const rc = recheck[e.task_id]
+                          const label = rc?.verdict === 'PASS' ? '✅ 自动复算通过'
+                            : rc?.verdict === 'CHECK' ? '⚠️ 自动复算存疑'
+                            : rc ? '🔁 自动复算不可用' : '🔄 自动复算中…'
+                          return (
+                            <span className="ap-num-note">
+                              <span data-testid="review-numeric-note">⚠ 数值任务：请核对算式与输入</span>
+                              {rc && <span data-testid="auto-recheck-note"> · {label}{rc.note ? `：${rc.note}` : ''}</span>}
+                              <button className="mini" data-testid="recheck-btn"
+                                      onClick={() => runRecheck(e.task_id)}>↻ 复算</button>
+                            </span>
+                          )
+                        })()}
                         {canReview ? (
                           <>
                             <input className="opinion-in" placeholder="修改意见（打回必填）"
@@ -629,7 +682,9 @@ function App() {
                 {audit.length === 0 ? <div className="muted audit-empty">暂无记录</div> : audit.map((e, i) => (
                   <div className="ev" key={i}>
                     <span className="ev-type">{EVENT_LABEL[e.event_type] || e.event_type}</span>
-                    {evSummary(e) && <span className="ev-pay">{evSummary(e)}</span>}
+                    {e.event_type === 'deliverable.submitted'
+                      ? <DeliverableLine e={e} />
+                      : (evSummary(e) && <span className="ev-pay">{evSummary(e)}</span>)}
                     <span className="ev-time">{new Date((e.created_at_ts || 0) * 1000).toLocaleTimeString()}</span>
                   </div>
                 ))}
