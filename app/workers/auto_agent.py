@@ -209,8 +209,11 @@ class AutoAgentWorker(Worker):
             f"done|{result['summary']}".encode()).hexdigest()[:10]
         # auto 路径交付证据字段（汇总 ⑤）：与人工路径一致，带 content_len/hash/preview
         evidence = self._deliverable_evidence(result["file_ref"])
-        payload = {"file_ref": result["file_ref"], "version": 1, "verdict": "done",
-                   "summary": result["summary"]}
+        # 三.4 version 随返工递增（v1.1.2）：与人工路径口径一致
+        prior = sum(1 for e in self._log.replay(task_id=tid)
+                    if e["event_type"] == events.EventType.DELIVERABLE_SUBMITTED.value)
+        payload = {"file_ref": result["file_ref"], "version": prior + 1,
+                   "verdict": "done", "summary": result["summary"]}
         payload.update(evidence)
         self._log.append(events.new_event(
             events.EventType.DELIVERABLE_SUBMITTED, f"agent:{AGENT_NAME}",

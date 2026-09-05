@@ -131,6 +131,57 @@ def test_review_owner_and_opinion(client, tmp_path):
     assert client.get(f"/tasks/{tid}/context", headers=_h(ta)).json()["status"] == "completed"
 
 
+# ---------- v1.1.2：终态守卫 / version 递增 / 并发 review 去重 ----------
+def test_completed_cannot_add_deliverable(client):
+    ta, _, _ = _reg(client, "a")
+    pid = _proj(client, ta)
+    tid = _task(client, ta, pid)
+    client.patch(f"/tasks/{tid}/state", headers=_h(ta), params={"to": "in_progress"})
+    client.post(f"/tasks/{tid}/deliverables", headers=_h(ta),
+                params={"file_ref": "artifacts/c.md", "verdict": "done"})
+    rid = client.post(f"/tasks/{tid}/reviews", headers=_h(ta)).json()["review_id"]
+    assert client.post(f"/reviews/{rid}/decision", headers=_h(ta),
+                       params={"verdict": "pass"}).status_code == 200
+    assert client.get(f"/tasks/{tid}/context", headers=_h(ta)).json()["status"] == "completed"
+    # 已完成再追加产出 → 400
+    r = client.post(f"/tasks/{tid}/deliverables", headers=_h(ta),
+                    params={"file_ref": "artifacts/c2.md", "verdict": "done"})
+    assert r.status_code == 400
+
+
+def test_deliverable_version_increments_on_rework(client):
+    ta, _, _ = _reg(client, "a")
+    pid = _proj(client, ta)
+    tid = _task(client, ta, pid)
+    client.patch(f"/tasks/{tid}/state", headers=_h(ta), params={"to": "in_progress"})
+    client.post(f"/tasks/{tid}/deliverables", headers=_h(ta),
+                params={"file_ref": "artifacts/r1.md", "verdict": "done"})
+    rid = client.post(f"/tasks/{tid}/reviews", headers=_h(ta)).json()["review_id"]
+    client.post(f"/reviews/{rid}/decision", headers=_h(ta),
+                params={"verdict": "needs_changes", "opinion": "改"})
+    client.post(f"/tasks/{tid}/deliverables", headers=_h(ta),
+                params={"file_ref": "artifacts/r2.md", "verdict": "done"})
+    evs = client.get(f"/projects/{pid}/audit", headers=_h(ta)).json()["events"]
+    vers = [e["payload"]["version"] for e in evs
+            if e["event_type"] == "deliverable.submitted"]
+    assert vers == [1, 2], f"version 应随返工递增，实际 {vers}"
+
+
+def test_concurrent_duplicate_review_converges(client):
+    ta, _, _ = _reg(client, "a")
+    pid = _proj(client, ta)
+    tid = _task(client, ta, pid)
+    client.patch(f"/tasks/{tid}/state", headers=_h(ta), params={"to": "in_progress"})
+    # 同内容并发等价：重复提交同 file_ref+summary → 交付/复核都收敛为 1
+    for _ in range(3):
+        r = client.post(f"/tasks/{tid}/deliverables", headers=_h(ta),
+                        params={"file_ref": "artifacts/d.md", "verdict": "done", "summary": "s"})
+        assert r.status_code == 200
+    evs = client.get(f"/projects/{pid}/audit", headers=_h(ta)).json()["events"]
+    reqs = {e["payload"]["review_id"] for e in evs if e["event_type"] == "review.requested"}
+    assert len(reqs) == 1, f"重复同内容应只有 1 个 review，实际 {len(reqs)}: {reqs}"
+
+
 # ---------- 真人账号可被指派 reviewer（方案 b） ----------
 def test_real_user_assigned_reviewer_can_decide(client):
     to, uname, _ = _reg(client, "owner")

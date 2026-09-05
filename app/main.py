@@ -962,13 +962,28 @@ def submit_deliverable(tid: str, file_ref: str,
         for e in evs:
             if e["event_type"] == events.EventType.TASK_STATE_CHANGED.value:
                 state = TaskStatus(e["payload"]["to"])
+    # 三.5 终态守卫（v1.1.2）：completed/cancelled/archived 不能再追加产出
+    if state in (TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.ARCHIVED):
+        raise HTTPException(400, f"任务已处于 {state.value}，不能再提交产出")
+    # 同内容已存在 → 幂等短路（重试/并发同内容不重复落交付，保持 version 不变）
+    for e in evs:
+        if e["event_type"] == events.EventType.DELIVERABLE_SUBMITTED.value \
+                and e["payload"].get("file_ref") == file_ref \
+                and e["payload"].get("verdict") == verdict \
+                and e["payload"].get("summary") == summary:
+            return {"task_id": tid, "deliverable": file_ref,
+                    "status": state.value, "idempotent": True}
+    # 三.4 version 随返工递增（v1.1.2）：第 N 次提交 = 已有交付数 + 1
+    prior_deliv = sum(1 for e in evs
+                      if e["event_type"] == events.EventType.DELIVERABLE_SUBMITTED.value)
+    version = prior_deliv + 1
     idem = f"deliverable:{tid}:{file_ref}:" + hashlib.sha256(
         f"{verdict}|{summary}".encode()).hexdigest()[:10]
     # 产出证据（龙虾反馈阻塞#4）：验证文件 + 存内容长度/哈希/预览
     evidence = _deliverable_evidence(file_ref)
     log.append(events.new_event(
         events.EventType.DELIVERABLE_SUBMITTED, f"agent:{agent}",
-        {"file_ref": file_ref, "version": 1, "verdict": verdict, "summary": summary,
+        {"file_ref": file_ref, "version": version, "verdict": verdict, "summary": summary,
          **evidence},
         project_id=project_id, task_id=tid, idempotency_key=idem))
     # 闭环：Agent 提交产出 → 产出自动交接给复核人（状态机第七节）
@@ -1002,13 +1017,16 @@ def submit_deliverable(tid: str, file_ref: str,
         if requested_ids - decided_ids:
             pending_review = True
         if not pending_review:
-            rid = str(uuid.uuid4())
+            # 二 并发去重（v1.1.2）：review 幂等键/rid 绑定本次交付内容哈希——
+            # 并行同内容提交各自落这里 → 同 key 同内容 → 事件层幂等只落 1 条，不再 1 交付 4 review
+            dk = hashlib.sha256(idem.encode()).hexdigest()[:10]
+            rid = f"rv-{dk}"
             log.append(events.new_event(
                 events.EventType.REVIEW_REQUESTED, f"agent:{agent}",
                 {"review_id": rid, "trigger": "deliverable.submitted",
                  "reviewer": reviewer},
                 project_id=project_id, task_id=tid,
-                idempotency_key=f"review:req:{tid}:{rid[:8]}"))
+                idempotency_key=f"review:req:{tid}:{dk}"))
     return {"task_id": tid, "deliverable": file_ref,
             "status": new_state.value if new_state else state.value}
 
