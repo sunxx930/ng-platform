@@ -182,6 +182,40 @@ def test_concurrent_duplicate_review_converges(client):
     assert len(reqs) == 1, f"重复同内容应只有 1 个 review，实际 {len(reqs)}: {reqs}"
 
 
+# ---------- v1.2.1：数值任务自动复算比对 ----------
+def test_numeric_task_autocheck(client, monkeypatch, tmp_path):
+    import app.services.autocheck as ac
+    class FakeLLM:
+        def complete(self, system, user, **kw):
+            return '{"verdict":"PASS","note":"复核一致：均值按输入重算通过"}'
+        def usage(self): return []
+    monkeypatch.setattr(ac, "LLMClient", lambda *a, **k: FakeLLM())
+    monkeypatch.setenv("NG_HOME", str(tmp_path))
+    (tmp_path / "artifacts").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts" / "n.md").write_text("输入 [1,2,3,4,5] 均值=3", encoding="utf-8")
+    ta, _, _ = _reg(client, "a")
+    pid = _proj(client, ta)
+    # 数值标题（触发复算），description 带输入与算式
+    tid = client.post(f"/projects/{pid}/tasks", headers=_h(ta),
+                      params={"title": "计算胜率均值", "description": "输入 [1,2,3] 算式 mean()"}).json()["task_id"]
+    client.patch(f"/tasks/{tid}/state", headers=_h(ta), params={"to": "in_progress"})
+    r = client.post(f"/tasks/{tid}/deliverables", headers=_h(ta),
+                    params={"file_ref": "n.md", "verdict": "done"})
+    assert r.status_code == 200
+    rr = client.post(f"/tasks/{tid}/recheck", headers=_h(ta))
+    assert rr.status_code == 200, rr.text
+    d = rr.json()
+    assert d.get("checked") is True and d.get("verdict") == "PASS", d
+    evs = client.get(f"/projects/{pid}/audit", headers=_h(ta)).json()["events"]
+    assert any(e["event_type"] == "auto.rechecked" and e["payload"].get("verdict") == "PASS"
+               for e in evs), "应落 auto.rechecked 事件"
+    # 非数值任务 → SKIP，不落事件
+    tid2 = client.post(f"/projects/{pid}/tasks", headers=_h(ta),
+                       params={"title": "写周报"}).json()["task_id"]
+    rr2 = client.post(f"/tasks/{tid2}/recheck", headers=_h(ta)).json()
+    assert rr2.get("verdict") == "SKIP"
+
+
 # ---------- 真人账号可被指派 reviewer（方案 b） ----------
 def test_real_user_assigned_reviewer_can_decide(client):
     to, uname, _ = _reg(client, "owner")

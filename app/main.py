@@ -1115,6 +1115,20 @@ def request_review(tid: str, auth: dict = Depends(require_auth)):
     return {"review_id": rid, "task_id": tid}
 
 
+@app.post("/tasks/{tid}/recheck")
+def task_recheck(tid: str, auth: dict = Depends(require_auth)):
+    """数值任务自动复算比对（v1.2.1）。owner/服务器 token 触发；best-effort 不阻塞。
+
+    结果落 auto.rechecked 事件（幂等按交付物），人工复核仍是最终决策。
+    """
+    _require_task_access(tid, auth)
+    from app.services.autocheck import run_autocheck
+    pid = _task_project_id(tid)
+    if pid is None:
+        raise HTTPException(404, "task not found")
+    return run_autocheck(pid, tid, log)
+
+
 @app.post("/reviews/{rid}/decision")
 def review_decision(rid: str, verdict: ReviewVerdict, opinion: str = "",
                     auth: dict = Depends(require_auth)):
