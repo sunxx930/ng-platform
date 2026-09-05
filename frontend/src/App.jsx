@@ -93,7 +93,7 @@ function AuthScreen({ onAuth }) {
         <div className="brand auth-brand">
           <div className="logo">🐳</div>
           <div className="brand-text">
-            <div className="brand-name"><span className="accent">NG</span> AI Platform</div>
+            <div className="brand-name"><span className="accent">NG</span> AI Platform<sup>™</sup></div>
             <div className="tagline">给一个目标，得到你想要的</div>
           </div>
         </div>
@@ -360,7 +360,7 @@ function App() {
         <div className="brand">
           <div className="logo">🐳</div>
           <div className="brand-text">
-            <div className="brand-name"><span className="accent">NG</span> AI Platform</div>
+            <div className="brand-name"><span className="accent">NG</span> AI Platform<sup>™</sup></div>
             <div className="tagline">给一个目标，得到你想要的</div>
           </div>
         </div>
