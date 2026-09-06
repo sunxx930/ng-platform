@@ -544,6 +544,41 @@ def post_message(pid: str, body: str, parse: bool = False,
     return {"message_id": mid, "created_tasks": created}
 
 
+# ---------- 项目材料库（v1.2.1）：客户上传原始数据（Word/Excel/PPT/图片/文本） ----------
+class MaterialIn(BaseModel):
+    name: str
+    data_b64: str   # base64 内容（避免 multipart/python-multipart 依赖）
+
+
+@app.post("/projects/{pid}/materials")
+def upload_material(pid: str, body: MaterialIn, auth: dict = Depends(require_auth)):
+    """项目级上传原始材料：校验类型/大小 → 落沙箱 project_inputs/ → 文本抽取。"""
+    import base64
+    _require_project_access(pid, auth)
+    from app.services.materials import store_material, MaterialError
+    try:
+        data = base64.b64decode(body.data_b64)
+    except Exception:
+        raise HTTPException(400, "data_b64 无法解码")
+    try:
+        rec = store_material(pid, body.name, data)
+    except MaterialError as ex:
+        raise HTTPException(400, str(ex))
+    log.append(events.new_event(
+        events.EventType.MATERIAL_UPLOADED, f"user:{auth['user']}", rec,
+        project_id=pid, idempotency_key=f"material:{pid}:{rec['material_id']}"))
+    return rec
+
+
+@app.get("/projects/{pid}/materials")
+def list_materials(pid: str, auth: dict = Depends(require_auth)):
+    """列出项目已上传材料（名称/原件引用/抽取文本引用/大小/note）。"""
+    _require_project_access(pid, auth)
+    items = [e["payload"] for e in log.replay(project_id=pid)
+             if e["event_type"] == events.EventType.MATERIAL_UPLOADED.value]
+    return {"materials": items}
+
+
 # ---------- Agent 注册中心 ----------
 @app.post("/agents/register")
 def register_agent(name: str, capability: str = "", role: str = "",

@@ -32,6 +32,7 @@ class EventType(str, Enum):
     AGENT_EXECUTION_FAILED = "agent.execution_failed"  # 执行失败可审计（汇总v1.2 ⑤）
     TASK_STALLED = "task.stalled"   # 悬空任务告警（v1.1.1：owner 失配/无人执行 30min）
     AUTO_RECHECKED = "auto.rechecked"  # 数值任务自动复算比对结果（v1.2.1）
+    MATERIAL_UPLOADED = "material.uploaded"  # 项目材料库：客户上传原始数据（v1.2.1）
 
 
 import time
