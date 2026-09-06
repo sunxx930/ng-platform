@@ -3,7 +3,18 @@
 > Windows 版 = **onefile 单文件 exe**，分发最简。
 > 打包必须在 **Windows 本机**执行（PyInstaller 不跨平台）。Windows 版不做代码签名（无该要求）。
 
-## 三步
+## 方案 A：一键出包（推荐，拿去任何 Windows 电脑即可）
+1. **装 Python 3.12**（最省事）：
+   ```
+   winget install Python.Python.3.12
+   ```
+   （没 winget 就 python.org 下 3.12，勾 **Add to PATH**）
+2. **解压** `NG-AI-Platform-win构建包.zip`（桌面这份已含一键脚本）
+3. **双击 `build_and_zip.cmd`** → 自动装依赖 → PyInstaller 出单文件 exe → 自动压成 **`NG-AI-Platform-win.zip`**（解压目录下）
+
+产物直接拿去分发。
+
+## 方案 B：分步（要手动压 zip 时）
 
 1. **打包**：把项目拷到 Windows，双击 `scripts/build_windows.bat`
    → 自动装依赖 + 跑 `pyinstaller ng-platform.spec --noconfirm`
