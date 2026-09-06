@@ -8,6 +8,8 @@
 **新增**
 - 客户上传原始数据：Word(.docx)/Excel(.xlsx)/PPT(.pptx)/图片/文本/JSON/CSV → 落沙箱 `project_inputs/` + **纯 stdlib 文本抽取**（docx/pptx/xlsx 抽文字为 .txt 供文本模型读）
 - 端点 `POST/GET /projects/{pid}/materials`；护栏：≤20MB、白名单类型、越权 403
+- 前端项目区"📤 上传材料"按钮 + 材料标签列表
+- agent 注入：auto_agent 任务执行时把项目材料抽取文本并入上下文（"先读再算"），喂给执行/数值任务
 - 图片先存原件（图表需 OCR/视觉，二期）
 - 版本 → 1.2.1
 

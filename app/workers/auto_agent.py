@@ -132,6 +132,31 @@ class AutoAgentWorker(Worker):
                 return e["payload"].get("goal", "")
         return ""
 
+    def _project_materials(self, pid) -> str:
+        """项目上传的原始材料文本（材料库 v1.2.1）：按上传顺序拼接抽取文本，总量封顶。"""
+        if not pid:
+            return ""
+        parts, total, CAP = [], 0, 60000
+        for e in self._log.replay(project_id=pid):
+            if e["event_type"] != events.EventType.MATERIAL_UPLOADED.value:
+                continue
+            fr = e["payload"].get("text_ref")
+            name = e["payload"].get("name", "")
+            if not fr:
+                continue
+            try:
+                from app.storage.artifacts import resolve_artifact
+                txt = resolve_artifact(fr).read_text(encoding="utf-8", errors="replace")
+            except Exception:      # noqa: BLE001
+                continue
+            if total + len(txt) > CAP:
+                txt = txt[: max(0, CAP - total)]
+            parts.append(f"[材料:{name}]\n{txt}")
+            total += len(txt)
+            if total >= CAP:
+                break
+        return "\n".join(parts)
+
     def _upstream_content(self, tid: str) -> str:
         """该任务 depends_on 上游已产出的交付物内容（供下游引用真实数据）。
 
@@ -190,9 +215,11 @@ class AutoAgentWorker(Worker):
         goal = self._project_goal(ctx["project_id"]) if ctx.get("project_id") else ""
         upstream = self._upstream_content(tid)
         opinion = self._review_opinion(tid)
+        materials = self._project_materials(ctx.get("project_id"))
         task = TaskContext(task_id=tid, title=ctx["title"], description=ctx["description"],
                            deliverables=ctx["deliverables"],
                            project_goal=goal, upstream=upstream,
+                           materials_text=materials,
                            review_opinion=opinion)
         try:
             result = BuiltinAgent().execute(task)

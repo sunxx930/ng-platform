@@ -195,6 +195,7 @@ function App() {
   const [opinions, setOpinions] = useState({})   // v1.1：打回修改意见（复核需填）
   const [ver, setVer] = useState('')             // v1.2(A)：当前版本 + 检查更新
   const [recheck, setRecheck] = useState({})     // v1.2.1：数值任务自动复算结果(tid→{verdict,note})
+  const [materials, setMaterials] = useState([]) // v1.2.1：项目材料库
 
   // 会话校验：token 无效/过期 → 清会话回登录页
   useEffect(() => {
@@ -359,6 +360,32 @@ function App() {
     nums.forEach((tid) => { if (!recheck[tid]) runRecheck(tid) })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail])
+
+  // 项目材料库（v1.2.1）：加载列表 + 上传（文件→base64→沙箱）
+  function loadMats() {
+    if (!selected) return
+    api(`/projects/${selected}/materials`, token).then((d) => setMaterials(d.materials || [])).catch(() => {})
+  }
+  useEffect(() => { if (authed && selected) loadMats() }, [selected, authed]) // eslint-disable-line
+  function upMat() {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.onchange = () => {
+      const f = input.files && input.files[0]
+      if (!f) return
+      const rd = new FileReader()
+      rd.onload = () => {
+        const b64 = String(rd.result).split(',')[1]
+        api(`/projects/${selected}/materials`, token,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: f.name, data_b64: b64 }) })
+          .then(() => { loadMats(); showToast('📤 材料已上传') })
+          .catch((e) => setError(errMsg(e)))
+      }
+      rd.readAsDataURL(f)
+    }
+    input.click()
+  }
 
   function decideApproval(aid, result) {
     api(`/approvals/${aid}/decision?result=${result}`, token, { method: 'POST' })
@@ -583,6 +610,18 @@ function App() {
             <div className="loading">加载中…</div>
           ) : (
             <>
+              <div className="proj-mats" style={{ marginBottom: 10 }}>
+                <b>项目材料</b>
+                {materials.length === 0
+                  ? <span className="muted">（未上传——客户原始数据在这里上传）</span>
+                  : materials.map((m) => (
+                    <span className="tag" key={m.material_id} title={m.note || m.ext}
+                          data-testid="material-tag">
+                      {m.name}{m.text_ref ? '' : ' 🖼待解析'}
+                    </span>
+                  ))}
+                <button className="mini" data-testid="upload-material" onClick={upMat}>📤 上传材料</button>
+              </div>
               <h2>任务看板</h2>
               <div className="board">
                 {Object.entries(STATUS).map(([st, meta]) => {
