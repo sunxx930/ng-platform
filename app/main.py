@@ -1057,10 +1057,13 @@ def submit_deliverable(tid: str, file_ref: str,
         f"{verdict}|{summary}".encode()).hexdigest()[:10]
     # 产出证据（龙虾反馈阻塞#4）：验证文件 + 存内容长度/哈希/预览
     evidence = _deliverable_evidence(file_ref)
+    # v1.2.1：同源自动生成 docx/xlsx/pptx 附件（office 交付；无文本稿则跳过）
+    from app.services.export import generate_deliverable_files
+    attachments = generate_deliverable_files(project_id, tid, file_ref)
     log.append(events.new_event(
         events.EventType.DELIVERABLE_SUBMITTED, f"agent:{agent}",
         {"file_ref": file_ref, "version": version, "verdict": verdict, "summary": summary,
-         **evidence},
+         "files": attachments, **evidence},
         project_id=project_id, task_id=tid, idempotency_key=idem))
     # 闭环：Agent 提交产出 → 产出自动交接给复核人（状态机第七节）
     new_state = None
@@ -1162,6 +1165,31 @@ def task_recheck(tid: str, auth: dict = Depends(require_auth)):
     if pid is None:
         raise HTTPException(404, "task not found")
     return run_autocheck(pid, tid, log)
+
+
+@app.get("/tasks/{tid}/deliverable_file")
+def deliverable_file(tid: str, fmt: str = "docx", auth: dict = Depends(require_auth)):
+    """下载某任务最新交付的 office 附件（docx/xlsx/pptx）。owner/服务器 token。"""
+    from fastapi.responses import FileResponse
+    _require_task_access(tid, auth)
+    latest = None
+    for e in log.replay(task_id=tid):
+        if e["event_type"] == events.EventType.DELIVERABLE_SUBMITTED.value \
+                and e["payload"].get("file_ref"):
+            latest = e["payload"]
+    if not latest or not (latest.get("files") or {}).get(fmt):
+        raise HTTPException(404, f"该任务无 {fmt} 附件")
+    ref = latest["files"][fmt]
+    from app.storage.artifacts import artifacts_base
+    base = artifacts_base()
+    p = (base / ref).resolve()
+    try:
+        p.relative_to(base)
+    except ValueError:
+        raise HTTPException(403, "附件路径非法")
+    if not p.is_file():
+        raise HTTPException(404, f"{fmt} 附件不存在")
+    return FileResponse(p, filename=f"{tid}.{fmt}")
 
 
 @app.post("/reviews/{rid}/decision")

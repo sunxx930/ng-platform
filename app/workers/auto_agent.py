@@ -239,8 +239,13 @@ class AutoAgentWorker(Worker):
         # 三.4 version 随返工递增（v1.1.2）：与人工路径口径一致
         prior = sum(1 for e in self._log.replay(task_id=tid)
                     if e["event_type"] == events.EventType.DELIVERABLE_SUBMITTED.value)
+        # v1.2.1：同源自动生成 docx/xlsx/pptx 附件（office 交付）
+        from app.services.export import generate_deliverable_files
+        attachments = generate_deliverable_files(ctx.get("project_id"), tid,
+                                                 result["file_ref"], title=ctx.get("title", ""))
         payload = {"file_ref": result["file_ref"], "version": prior + 1,
-                   "verdict": "done", "summary": result["summary"]}
+                   "verdict": "done", "summary": result["summary"],
+                   "files": attachments}
         payload.update(evidence)
         self._log.append(events.new_event(
             events.EventType.DELIVERABLE_SUBMITTED, f"agent:{AGENT_NAME}",

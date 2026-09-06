@@ -24,8 +24,19 @@ function evSummary(e) {
   return map[e.event_type] || ''
 }
 
-// deliverable 展示优化（v1.2.1）：审计里的"产出"从文件名 → 完整交付信息+内容预览
-function DeliverableLine({ e }) {
+// deliverable 展示优化（v1.2.1）：审计里的"产出" → 完整交付信息 + 内容预览 + office 附件下载
+async function dlOffice(tid, fmt, token) {
+  const r = await fetch(`/api/tasks/${tid}/deliverable_file?fmt=${fmt}`,
+    { headers: { Authorization: `Bearer ${token}` } })
+  if (!r.ok) return
+  const b = await r.blob()
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(b)
+  a.download = `${tid}.${fmt}`
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+function DeliverableLine({ e, token }) {
   const p = e.payload || {}
   const fn = String(p.file_ref || '').split('/').pop()
   const prev = String(p.preview || '')
@@ -35,10 +46,21 @@ function DeliverableLine({ e }) {
   if (p.content_hash) meta.push(`#${p.content_hash}`)
   if (p.verdict && p.verdict !== 'done') meta.push(`verdict=${p.verdict}`)
   if (p.file_missing) meta.push('⚠ 文件缺失')
+  const files = p.files || {}
   return (
     <span className="ev-pay ev-deliv">
       <span className="ev-deliv-main">📄 <b>{fn}</b>{meta.length ? ` · ${meta.join(' · ')}` : ''}</span>
       {p.summary ? <span className="ev-deliv-sum"> — {p.summary}</span> : null}
+      {Object.keys(files).length > 0 && (
+        <span style={{ marginLeft: 6 }}>
+          {Object.keys(files).map((fmt) => (
+            <button className="mini" key={fmt} data-testid={`dl-${fmt}`}
+                    onClick={() => dlOffice(e.task_id, fmt, token)}>↓{fmt.toUpperCase()}</button>
+          ))}
+          <button className="mini" data-testid="dl-pdf"
+                  onClick={() => window.print()} title="打印/另存为 PDF">🖨 PDF</button>
+        </span>
+      )}
       {prev ? (
         <span className="ev-deliv-prev" style={{ display: 'block', fontSize: '12px', opacity: 0.72, marginTop: 2 }}
               title={prev.length > 120 ? prev : undefined}>
@@ -722,7 +744,7 @@ function App() {
                   <div className="ev" key={i}>
                     <span className="ev-type">{EVENT_LABEL[e.event_type] || e.event_type}</span>
                     {e.event_type === 'deliverable.submitted'
-                      ? <DeliverableLine e={e} />
+                      ? <DeliverableLine e={e} token={token} />
                       : (evSummary(e) && <span className="ev-pay">{evSummary(e)}</span>)}
                     <span className="ev-time">{new Date((e.created_at_ts || 0) * 1000).toLocaleTimeString()}</span>
                   </div>
