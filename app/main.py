@@ -88,6 +88,37 @@ def update_check(auth: dict = Depends(require_auth)):
             "download_url": download}
 
 
+@app.get("/update/status")
+def update_status(auth: dict = Depends(require_auth)):
+    """内容热更状态（方案A）：当前 NG_HOME/ui 的 content version（无 NG_HOME → 未启用）。"""
+    from app.version import VERSION
+    ng_home = os.environ.get("NG_HOME", "").strip()
+    if not ng_home:
+        return {"enabled": False, "ui_version": None, "bundle_version": VERSION}
+    vf = Path(ng_home) / "ui" / "version.json"
+    ui_version = None
+    if vf.is_file():
+        try:
+            import json as _j
+            ui_version = _j.loads(vf.read_text(encoding="utf-8")).get("version")
+        except Exception:      # noqa: BLE001
+            ui_version = None
+    return {"enabled": True, "ui_version": ui_version, "bundle_version": VERSION}
+
+
+@app.post("/update/apply")
+def update_apply(auth: dict = Depends(require_auth)):
+    """拉内容升级包并原子落到 NG_HOME/ui（只动前端资产，不碰项目/数据）。"""
+    ng_home = os.environ.get("NG_HOME", "").strip()
+    if not ng_home:
+        raise HTTPException(400, "当前无 NG_HOME，未启用内容热更")
+    from app.services.updater import apply_ui_update
+    try:
+        return apply_ui_update(Path(ng_home) / "ui")
+    except Exception as ex:      # noqa: BLE001
+        raise HTTPException(400, f"内容升级失败: {ex}")
+
+
 @app.get("/auth/me")
 def auth_me(auth: dict = Depends(require_auth)):
     """当前身份与权限级别（前端权限感知：隐藏/禁用 L3 动作）。"""
@@ -1472,13 +1503,45 @@ async def strip_api_prefix(request: Request, call_next):
     return await call_next(request)
 
 
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 _DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-if _DIST.exists() and (_DIST / "index.html").exists():
-    app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
+
+
+def _ui_roots() -> list:
+    """前端优先读 NG_HOME/ui（内容热更目录，方案A），否则回退到包内 frontend/dist。"""
+    ng_home = os.environ.get("NG_HOME", "").strip()
+    roots = []
+    if ng_home:
+        roots.append(Path(ng_home) / "ui")
+    if _DIST.exists() and (_DIST / "index.html").exists():
+        roots.append(_DIST)
+    return roots
+
+
+def _ui_file(rel: str):
+    rel = rel.lstrip("/")
+    if ".." in rel.split("/") or "\\" in rel or Path(rel).is_absolute():
+        return None
+    for root in _ui_roots():
+        p = (root / rel).resolve()
+        try:
+            p.relative_to(root.resolve())
+        except ValueError:
+            continue
+        if p.is_file():
+            return p
+    return None
+
+
+if (_DIST.exists() and (_DIST / "index.html").exists()) or os.environ.get("NG_HOME"):
+
+    @app.get("/assets/{rest:path}", include_in_schema=False)
+    async def ui_asset(rest: str):
+        p = _ui_file("assets/" + rest)
+        return FileResponse(p) if p else JSONResponse(status_code=404, content={"detail": "not found"})
 
     @app.get("/", include_in_schema=False)
     async def spa():
-        return FileResponse(_DIST / "index.html")
+        p = _ui_file("index.html")
+        return FileResponse(p) if p else JSONResponse(status_code=404, content={"detail": "no ui"})

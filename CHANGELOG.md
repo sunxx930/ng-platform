@@ -4,6 +4,13 @@
 > 升级内容分四类标注：**新增 / 修复 / 安全 / 其他**；用户可见项尽量口语化。
 > 本文从下往上：新版本在上。
 
+## v1.2.2（2026-09-08）— 内容热更（升级模式 A，后端首片）
+**新增**
+- 前端托管改为"NG_HOME/ui 优先、包内 dist 兜底"——UI/规则可热更，不改 exe
+- `POST /update/apply`：拉官网 `update.json` manifest → sha256 校验 → 原子落到 `NG_HOME/ui`（只动前端资产，**绝不碰 data/events/artifacts → 客户项目零影响**）；`GET /update/status` 看当前 ui content version
+- 护栏：白名单扩展名/目录穿越拒绝/文件数上限
+- 版本 → 1.2.2
+
 ## v1.2.1（2026-09-06）— 项目材料库（后端首版）
 **新增**
 - 客户上传原始数据：Word(.docx)/Excel(.xlsx)/PPT(.pptx)/图片/文本/JSON/CSV → 落沙箱 `project_inputs/` + **纯 stdlib 文本抽取**（docx/pptx/xlsx 抽文字为 .txt 供文本模型读）
