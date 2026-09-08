@@ -383,6 +383,21 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail])
 
+  // v1.2.2 内容热更：登录后每天最多自检一次，有更新自动 apply 并刷新（只动前端，不影响数据）
+  useEffect(() => {
+    if (!authed) return
+    const KEY = 'ng_ui_update_day'
+    const today = new Date().toISOString().slice(0, 10)
+    if (localStorage.getItem(KEY) === today) return
+    api('/update/apply', token, { method: 'POST' })
+      .then((d) => {
+        localStorage.setItem(KEY, today)
+        if (d && d.applied > 0) location.reload()
+      })
+      .catch(() => { localStorage.setItem(KEY, today) })   // 无 NG_HOME/离线 → 静默跳过
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed, token])
+
   // 项目材料库（v1.2.1）：加载列表 + 上传（文件→base64→沙箱）
   function loadMats() {
     if (!selected) return
