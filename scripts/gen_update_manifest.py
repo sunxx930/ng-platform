@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "frontend" / "dist"
-OUT = ROOT / "website" / "ui"
+OUT = ROOT / "ui"
 BASE = "https://ng-platform.ai/ui"
 _EXT = {".html", ".js", ".css", ".svg", ".png", ".ico", ".json", ".map"}
 
@@ -43,7 +43,7 @@ def main() -> int:
             })
     manifest = {"version": VERSION, "date": __import__("time").strftime("%Y-%m-%d"),
                 "files": files}
-    (ROOT / "website" / "update.json").write_text(json.dumps(manifest, ensure_ascii=False),
+    (ROOT / "update.json").write_text(json.dumps(manifest, ensure_ascii=False),
                                                   encoding="utf-8")
     print(f"update.json version={VERSION}, files={len(files)} → website/ui")
     return 0
