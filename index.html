@@ -180,12 +180,32 @@
 
   <section class="cta" id="feedback">
     <h2 style="margin-bottom:10px">意见反馈</h2>
-    <p style="color:var(--muted);margin-bottom:18px">使用中遇到问题或有建议？点下面按钮提交，我们会看到并回复。</p>
-    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
-      <a class="btn" href="https://github.com/sunxx930/ng-platform/issues/new?template=feedback.md&amp;labels=feedback">📝 提交反馈（GitHub）</a>
-      <a class="btn ghost" href="mailto:support@ng-platform.ai?subject=%5B%E5%8F%8D%E9%A6%88%5D%20">✉️ 邮件反馈</a>
+    <p style="color:var(--muted);margin-bottom:16px">填一下点提交即可，**无需注册账号**。</p>
+    <div style="max-width:560px;margin:0 auto;text-align:left">
+      <select id="fb-type" style="width:100%;padding:10px;margin-bottom:10px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:var(--panel);color:var(--text)">
+        <option>问题（打不开 / 报错 / 卡住）</option>
+        <option>建议 / 想加的功能</option>
+        <option>其他</option>
+      </select>
+      <textarea id="fb-body" rows="5" placeholder="描述你遇到的问题或建议……（可写系统：macOS / Windows）"
+        style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:var(--panel);color:var(--text);font:inherit"></textarea>
+      <input id="fb-contact" placeholder="联系方式（可选，方便回复你）"
+        style="width:100%;padding:10px;margin:10px 0;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:var(--panel);color:var(--text)">
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn" type="button" onclick="fbSend()">📨 提交反馈</button>
+        <button class="btn ghost" type="button" onclick="fbCopy()">📋 复制内容</button>
+      </div>
+      <p id="fb-hint" style="color:var(--muted);font-size:13px;margin-top:8px"></p>
     </div>
-    <p style="color:var(--muted);font-size:13px;margin-top:12px">反馈会公开在你提交的 Issues 里（请勿写敏感信息）；也可直接发邮件。</p>
+    <script>
+      function fbText(){var t=document.getElementById('fb-type').value;var b=document.getElementById('fb-body').value.trim();
+        var c=document.getElementById('fb-contact').value.trim();
+        return '类型：'+t+'\\n系统：'+(/(Mac|iPhone|iPad)/i.test(navigator.userAgent)?'macOS':'Windows/其他')+'\\n问题/建议：'+b+(c?('\\n联系方式：'+c):'');}
+      function fbSend(){var b=document.getElementById('fb-body').value.trim();if(!b){document.getElementById('fb-hint').textContent='请先填写内容';return;}
+        location.href='mailto:support@ng-platform.ai?subject='+encodeURIComponent('[反馈] '+document.getElementById('fb-type').value)+'&body='+encodeURIComponent(fbText());}
+      function fbCopy(){navigator.clipboard.writeText(fbText()).then(function(){
+        document.getElementById('fb-hint').textContent='已复制，发到 support@ng-platform.ai 即可';});}
+    </script>
   </section>
 
   <footer>
