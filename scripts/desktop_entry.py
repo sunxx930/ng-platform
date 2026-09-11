@@ -25,13 +25,24 @@ def _bundle_root() -> Path:
 
 
 def _work_dir() -> Path:
-    """用户数据目录（事件/用户/日志落这里，可写）。"""
+    """用户数据目录（事件/用户/日志落这里，可写）。不可写回退临时目录，避免首次注册 500。"""
     if _is_frozen():
         base = Path(os.environ.get("NG_HOME", Path.home() / ".ng-platform"))
     else:
         base = Path(__file__).resolve().parent.parent / "data"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        probe = base / ".write_test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return base
+    except Exception as e:      # noqa: BLE001
+        import tempfile
+        fallback = Path(tempfile.gettempdir()) / "ng-platform-data"
+        fallback.mkdir(parents=True, exist_ok=True)
+        print(f"[desktop] 数据目录 {base} 不可写（{e}），回退到 {fallback}", flush=True)
+        os.environ["NG_HOME"] = str(fallback)
+        return fallback
 
 
 def main():
@@ -49,11 +60,16 @@ def main():
             break
 
     import uvicorn
+    import app.main as M                       # 先导入：拿到共享的 log 与 app
+    from app.workers.runner import run_forever
     port = int(os.environ.get("NG_PORT", "8001"))
 
-    # 后台启动 uvicorn
+    # 单机版关键修复（2026-09-12）：打包应用内**同进程后台线程**跑 worker，
+    # 否则只起 API+前端 → 任务永远停 todo（auto_start/auto_agent/复核不执行）。
+    threading.Thread(target=run_forever, args=(M.log,), daemon=True).start()
+
     def _serve():
-        uvicorn.run("app.main:app", host="127.0.0.1", port=port, log_level="warning")
+        uvicorn.run(M.app, host="127.0.0.1", port=port, log_level="warning")
 
     t = threading.Thread(target=_serve, daemon=True)
     t.start()

@@ -73,6 +73,15 @@ if xattr -r -l "$STAGED_APP" 2>/dev/null | grep -qiE 'FinderInfo|ResourceFork|fi
   exit 1
 fi
 
+# ---------- 1b. 写入真实版本号（修 Info.plist 0.0.0） ----------
+APP_VER=$(.venv/bin/python -c "import re;print(re.search(r'VERSION\s*=\s*\"([^\"]+)\"',open('app/version.py',encoding='utf-8').read()).group(1))" 2>/dev/null || echo "0.0.0")
+PL="$STAGED_APP/Contents/Info.plist"
+for k in CFBundleShortVersionString CFBundleVersion; do
+  /usr/libexec/PlistBuddy -c "Set :$k $APP_VER" "$PL" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :$k string $APP_VER" "$PL"
+done
+echo "[sign] 版本号写入: $APP_VER"
+
 # ---------- 2. 签名（hardened runtime + 时间戳，公证必需） ----------
 echo "[sign] 2/7 Developer ID 签名…"
 codesign --force --deep --verbose \

@@ -504,9 +504,30 @@ def _agents_registry() -> list[dict]:
     return list(reg.values())
 
 
+def _seed_builtin_agents():
+    """首次使用（无任何注册 agent）：自动把 builtin 模板全量注册，免用户手动一键注册。
+
+    幂等：幂等键按 name+capability+role+builtin，重复调用不产生新事件。
+    """
+    for t in _load_templates():
+        if t.get("executor", "builtin") != "builtin":
+            continue
+        log.append(events.new_event(
+            events.EventType.AGENT_REGISTERED, "system",
+            {"name": t["name"], "capability": t.get("capability", ""),
+             "role": t.get("role", ""), "status": "available", "permission": "L1",
+             "executor": "builtin", "template_id": t.get("id")},
+            idempotency_key=f"agentreg:{t['name']}:" + hashlib.sha256(
+                f"{t.get('capability', '')}|{t.get('role', '')}|builtin".encode()
+            ).hexdigest()[:10]))
+
+
 def _parse_and_create(pid: str, goal: str) -> list[dict]:
     """需求解析 + 团队匹配 + 建任务（闭环第 3 步前门）。返回 created tasks。"""
     agents = _agents_registry()
+    if not agents:                      # 全新安装：预置 builtin agent（B 修复）
+        _seed_builtin_agents()
+        agents = _agents_registry()
     # 只把 builtin（NG 自研，平台能自动执行）agent 名单给 LLM 参考，
     # 避免 LLM 凭名字推荐外部 openclaw agent → 任务卡等外部执行
     builtin_names = [a["name"] for a in agents
@@ -571,7 +592,9 @@ def post_message(pid: str, body: str, parse: bool = False,
                 {"error": str(ex)[:300], "body_len": len(body)},
                 project_id=pid, idempotency_key=f"parsefail:{pid}:" + hashlib.sha256(
                     body.encode()).hexdigest()[:10]))
-            raise HTTPException(503, f"需求解析失败（算力未配置或模型输出异常）: {ex}")
+            raise HTTPException(503, "需求解析失败：未配置算力。请在右上「算力」按引导配置 API Key"
+                                     "（推荐通义千问，有免费额度），保存后重试。"
+                                     f"（{ex}）")
     return {"message_id": mid, "created_tasks": created}
 
 
