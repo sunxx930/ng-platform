@@ -60,8 +60,12 @@ def load_config_from_env(env: dict | None = None) -> LLMConfig:
     key 来源优先级：环境变量 → Docker secret 文件（/run/secrets/<NAME>）→ .env。
     """
     if env is None:
+        # 明确从「数据目录/当前工作目录」的 .env 读取（桌面版 cwd=NG_HOME）。
+        # 之前 load_dotenv() 无参会在包内路径找 → 界面保存的 key 读不到。
+        from pathlib import Path
         from dotenv import load_dotenv
-        load_dotenv()   # 读 gitignore 的 .env（不覆盖已存在的环境变量）
+        env_path = Path(os.environ.get("NG_HOME") or Path.cwd()) / ".env"
+        load_dotenv(env_path, override=False)
         env = dict(os.environ)
     provider = (env.get("LLM_PROVIDER") or "").strip().lower()
     anthropic_key = _key_from(env, "ANTHROPIC_API_KEY")

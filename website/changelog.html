@@ -19,6 +19,11 @@ code{background:#202a44;padding:1px 5px;border-radius:5px;font-size:.9em}
 升级内容分四类标注：<strong>新增 / 修复 / 安全 / 其他</strong>；用户可见项尽量口语化。
 本文从下往上：新版本在上。</p>
 </blockquote>
+<h2>v1.2.4（2026-09-13）— 上线阻塞修复（算力配置）</h2>
+<p><strong>修复</strong>
+- <strong>界面保存 API Key 立即生效 + 持久化</strong>（关键）：之前 key 写进包内路径且不更新运行进程 → 保存后仍报"未配置算力"、重启也无效。现写入数据目录 .env、并同步更新运行中环境变量，保存即生效、重启保留
+- 未配算力的提交提示改为引导去「算力」配 Key（推荐千问免费额度）
+- 版本 → 1.2.4</p>
 <h2>v1.2.3（2026-09-12）— 上线阻塞修复（单机版）</h2>
 <p><strong>修复</strong>
 - <strong>单机安装包随包拉起 worker</strong>（关键）：桌面版入口在进程内后台线程跑 auto_start/auto_agent/复核等 worker——之前只起 API+前端，装上后任务永远停「待办」不产出

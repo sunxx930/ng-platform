@@ -732,9 +732,12 @@ LLM_PROVIDERS: dict[str, dict] = {
 
 
 def _write_env_updates(updates: dict[str, str]):
-    """更新项目根 .env（gitignore），保留其它行。仅 key 级覆盖，不碰 secrets 文件。"""
+    """更新「数据目录/当前工作目录」的 .env（gitignore），保留其它行。
+
+    桌面版 cwd=NG_HOME（可写）；dev cwd=仓库根。之前写到包内路径 → 重启读不到。
+    """
     from pathlib import Path
-    path = Path(__file__).resolve().parent.parent / ".env"
+    path = Path(os.environ.get("NG_HOME") or Path.cwd()) / ".env"
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     keys = set(updates)
     kept = [ln for ln in lines if ln.split("=", 1)[0].strip() not in keys]
@@ -782,8 +785,11 @@ def set_llm_config(body: LLMConfigIn, auth: dict = Depends(require_auth)):
         updates["LLM_API_KEY"] = body.api_key.strip()
     updates["LLM_MODEL"] = body.model.strip() or prov["default_model"]
     _write_env_updates(updates)
+    # 关键修复（2026-09-13）：同步写入运行中进程的环境变量 → 保存后**立即生效**，
+    # 不必重启（之前只写文件、不更新 os.environ，LLMClient 下次构造仍读不到）。
+    os.environ.update({k: str(v) for k, v in updates.items()})
     return {"provider": p, "status": "saved",
-            "note": "下次 LLM 调用生效（docker 模式需重建容器加载 secrets）"}
+            "note": "已生效（立即 + 持久化到数据目录 .env，重启保留）"}
 
 
 # ---------- 试用者反馈 ----------
