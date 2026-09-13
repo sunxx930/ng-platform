@@ -92,7 +92,7 @@ for i in 1 2 3 4 5; do
        --sign "$CERT" "$STAGED_APP" 2>/tmp/ng-sign.err; then
     SIGN_OK=1; break
   fi
-  if grep -qi 'timestamp service is not available' /tmp/ng-sign.err; then
+  if grep -qiE 'timestamp' /tmp/ng-sign.err; then
     echo "[sign] ⚠ Apple 时间戳服务不可达，$((i*10))s 后重试（$i/5）…"
     echo "[sign]   若持续失败：多为 VPN/代理拦截 timestamp.apple.com —— 关掉 VPN 再跑本脚本"
     sleep $((i*10))
