@@ -14,6 +14,7 @@ from app.workers.blocker import BlockerWorker
 from app.workers.report import ReportWorker
 from app.workers.transfer_escalation import TransferEscalationWorker
 from app.workers.auto_agent import AutoAgentWorker
+from app.workers.auto_review import AutoReviewWorker
 
 
 def collect_task_ids(log: EventLog) -> list[str]:
@@ -34,7 +35,7 @@ def collect_task_ids(log: EventLog) -> list[str]:
 def build_workers(log: EventLog) -> list:
     return [AutoStartWorker(log), HeartbeatWorker(log), DeadlineWorker(log),
             BlockerWorker(log), ReportWorker(log), TransferEscalationWorker(log),
-            AutoAgentWorker(log)]
+            AutoAgentWorker(log), AutoReviewWorker(log)]
 
 
 def run_forever(log: EventLog, once: bool = False):

@@ -134,7 +134,7 @@ class LLMClient:
     def _require_ready(self):
         if not self.cfg.provider or not self.cfg.api_key:
             raise LLMConfigError(
-                "算力未配置：设 LLM_PROVIDER + ANTHROPIC_API_KEY/OPENAI_API_KEY"
+                "算力未配置：请在界面右上「算力」配置 API Key（推荐通义千问，有免费额度）"
                 + ("（NG_ENV=production 强制要求）" if self.cfg.strict else ""))
 
     def _build_payload(self, system: str, user: str, temperature: float) -> dict:
