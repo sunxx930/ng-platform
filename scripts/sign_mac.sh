@@ -84,9 +84,23 @@ echo "[sign] 版本号写入: $APP_VER"
 
 # ---------- 2. 签名（hardened runtime + 时间戳，公证必需） ----------
 echo "[sign] 2/7 Developer ID 签名…"
-codesign --force --deep --verbose \
-  --timestamp --options runtime \
-  --sign "$CERT" "$STAGED_APP"
+# 时间戳服务（timestamp.apple.com）偶发不可达时自动重试（VPN/网络波动常见）
+SIGN_OK=0
+for i in 1 2 3 4 5; do
+  if codesign --force --deep --verbose \
+       --timestamp --options runtime \
+       --sign "$CERT" "$STAGED_APP" 2>/tmp/ng-sign.err; then
+    SIGN_OK=1; break
+  fi
+  if grep -qi 'timestamp service is not available' /tmp/ng-sign.err; then
+    echo "[sign] ⚠ Apple 时间戳服务不可达，$((i*10))s 后重试（$i/5）…"
+    echo "[sign]   若持续失败：多为 VPN/代理拦截 timestamp.apple.com —— 关掉 VPN 再跑本脚本"
+    sleep $((i*10))
+  else
+    echo "[sign] ✗ 签名错误："; tail -4 /tmp/ng-sign.err; exit 1
+  fi
+done
+if [ "$SIGN_OK" != "1" ]; then echo "[sign] ✗ 时间戳服务连续不可达，请关 VPN/换网络后重试"; exit 1; fi
 codesign --verify --deep --strict --verbose=2 "$STAGED_APP"
 echo "[sign] 签名验证 OK"
 codesign -dv "$STAGED_APP" 2>&1 | grep -iE '^TeamIdentifier|^Signature' || true
