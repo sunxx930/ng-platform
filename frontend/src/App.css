@@ -241,3 +241,9 @@ button.link:hover { transform: none; color: var(--accent); }
 .notif-evt { font-weight: 600; font-size: 13px; }
 .notif-sum { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .notif-time { color: var(--dim); font-size: 11px; margin-top: 2px; }
+
+/* 品牌 logo（替换 🐳 emoji，2026-09-14）*/
+.brand-logo{display:inline-flex;align-items:center;background:#fff;border-radius:10px;padding:6px 10px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+.brand-logo img{height:30px;width:auto;display:block}
+.brand-logo.sm{padding:5px 8px;border-radius:8px}
+.brand-logo.sm img{height:22px}

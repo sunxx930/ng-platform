@@ -139,7 +139,7 @@ function AuthScreen({ onAuth }) {
     <div className="auth-screen">
       <div className="auth-card">
         <div className="brand auth-brand">
-          <div className="logo">🐳</div>
+          <span className="brand-logo"><img src="/logo-trim.png" alt="NG AI Platform" /></span>
           <div className="brand-text">
             <div className="brand-name"><span className="accent">NG</span> AI Platform<sup>™</sup></div>
             <div className="tagline">给一个目标，得到你想要的</div>
@@ -464,7 +464,7 @@ function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <div className="logo">🐳</div>
+          <span className="brand-logo"><img src="/logo-trim.png" alt="NG AI Platform" /></span>
           <div className="brand-text">
             <div className="brand-name"><span className="accent">NG</span> AI Platform<sup>™</sup></div>
             <div className="tagline">给一个目标，得到你想要的</div>
@@ -615,7 +615,7 @@ function App() {
           {!selected ? (
             projects.length === 0 ? (
               <div className="welcome">
-                <div className="welcome-icon">🐳</div>
+                <div className="welcome-icon"><span className="brand-logo sm"><img src="/logo-trim.png" alt="NG AI Platform" /></span></div>
                 <div className="welcome-title">👋 欢迎，{session.username} —— 这是你的工作台</div>
                 <div className="welcome-sub">在上面「把目标交给平台」，它会自动拆任务、派 agent、产出并复核；每个项目展开就是任务看板 + 审批队列 + 完整审计流</div>
                 {isDemo && (
