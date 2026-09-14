@@ -122,25 +122,26 @@ if [ -n "$APPLE_ID" ] && [ -n "$APP_PW" ]; then
 else
   echo "[sign] 4/7 提交公证（keychain 档案: ${PROFILE}，可等几分钟）…"
   rc=1
-  for i in 1 2 3; do
+  for i in 1 2 3 4 5; do
     set +e
-    xcrun notarytool submit "$STAGED_DMG" --keychain-profile "$PROFILE" --wait 2>&1 | tee /tmp/ng-notary.out
-    rc=${PIPESTATUS[0]}
+    xcrun notarytool submit "$STAGED_DMG" --keychain-profile "$PROFILE" --wait > /tmp/ng-notary.out 2>&1
+    rc=$?
     set -e
-    [ $rc -eq 0 ] && break
+    tail -5 /tmp/ng-notary.out
+    [ "$rc" = "0" ] && break
     if grep -qi 'No Keychain password item found' /tmp/ng-notary.out; then break; fi
-    echo "[sign] ⚠ 公证失败（rc=$rc，多为网络超时），$((i*20))s 后重试（$i/3）…"
-    echo "[sign]   连不上 appstoreconnect 就换网络/VPN 开关再试。"
+    echo "[sign] ⚠ 公证失败（rc=${rc}，多为网络超时），$((i*20))s 后重试（${i}/5）…"
+    echo "[sign]   连不上 appstoreconnect.apple.com 就切换网络/VPN 开关或换热点再试。"
     sleep $((i*20))
   done
-  if [ $rc -ne 0 ]; then
+  if [ "$rc" != "0" ]; then
     echo "[sign] 公证提交失败（rc=${rc}）。真实报错见上 / /tmp/ng-notary.out"
     echo "[sign]   若提示 'No Keychain password item found for profile: ${PROFILE}'，"
     echo "[sign]   请先在你自己的终端存一次档案（密码不会外泄）："
     echo "     xcrun notarytool store-credentials $PROFILE \\"
     echo "       --apple-id \"<你的Apple ID邮箱>\" \\"
     echo "       --team-id $TEAM_ID"
-    exit $rc
+    exit ${rc:-1}
   fi
 fi
 
