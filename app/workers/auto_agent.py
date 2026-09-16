@@ -216,10 +216,16 @@ class AutoAgentWorker(Worker):
         upstream = self._upstream_content(tid)
         opinion = self._review_opinion(tid)
         materials = self._project_materials(ctx.get("project_id"))
+        # 知识库检索（本地，零依赖）：按标题+描述取 TopN 注入，交付引用来源
+        try:
+            from app.services.kb import context_block
+            knowledge = context_block(f"{ctx.get('title','')} {ctx.get('description','')}", topn=3)
+        except Exception:      # noqa: BLE001
+            knowledge = ""
         task = TaskContext(task_id=tid, title=ctx["title"], description=ctx["description"],
                            deliverables=ctx["deliverables"],
                            project_goal=goal, upstream=upstream,
-                           materials_text=materials,
+                           materials_text=materials, knowledge=knowledge,
                            review_opinion=opinion)
         try:
             result = BuiltinAgent().execute(task)

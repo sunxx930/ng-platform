@@ -39,18 +39,26 @@ def _read_docx(path: Path) -> str:
 def _read_pptx(path: Path) -> str:
     out = []
     with zipfile.ZipFile(path) as z:
-        names = sorted(n for n in z.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", n))
-        for n in names:
-            xml = z.read(n).decode("utf-8", "replace")
+        # 幻灯片 + SmartArt图(diagrams) + 图表(charts) + 备注(notes)：
+        # 图形/架构图的文字多在 diagrams/*.xml，原生图表数值在 charts/*（c:v）
+        parts = [n for n in z.namelist() if re.match(
+            r"ppt/(slides/slide\d+|diagrams/data\d+|diagrams/drawing\d+|notesSlides/notesSlide\d+)\.xml$", n)]
+        chart_parts = [n for n in z.namelist() if n.startswith("ppt/charts/") and n.endswith(".xml")]
+        def texts_of(xml: str):
             try:
                 root = ET.fromstring(xml)
             except Exception:
-                continue
-            texts = [t.text or "" for t in root.iter(
-                "{http://schemas.openxmlformats.org/drawingml/2006/main}t")]
-            line = " ".join(x for x in texts if x.strip())
+                return []
+            return [t.text or "" for t in root.iter() if t.tag.endswith("}t")]
+        for n in sorted(parts):
+            line = " ".join(x for x in texts_of(z.read(n).decode("utf-8", "replace")) if x.strip())
             if line.strip():
                 out.append(line)
+        for n in sorted(chart_parts):      # 图表：取分类名与数值
+            xml = z.read(n).decode("utf-8", "replace")
+            nums = re.findall(r"<c:v>([^<]+)</c:v>", xml)
+            if nums:
+                out.append("[图表数据] " + ", ".join(nums[:80]))
     return "\n".join(out)
 
 
