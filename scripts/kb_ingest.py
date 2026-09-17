@@ -153,7 +153,8 @@ def mask_all(text: str, m: dict) -> str:
                 body = r'\s+'.join(re.escape(w) for w in v.split())
                 text = re.sub(r'(?<![A-Za-z])' + body + r'(?![A-Za-z])', code, text)
             else:
-                text = text.replace(v, code)
+                # 中文变体同样容忍 OCR 在字间插空格（如「高尔夫球 俱乐部」）
+                text = re.sub(r'\s*'.join(re.escape(ch) for ch in v), code, text)
     return text
 
 def apply_code(text: str, code: str, variants):
