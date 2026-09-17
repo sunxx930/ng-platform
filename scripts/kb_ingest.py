@@ -160,7 +160,7 @@ def _watch_names() -> list:
 def desensitize(t: str) -> str:
     for rx, rep in RULES:
         t = rx.sub(rep, t)
-    for n in _watch_names():        # 本地人名观察表（全局替换）
+    for n in sorted(_watch_names(), key=len, reverse=True):   # 长名优先
         t = t.replace(n, '[姓名]')
     t = _mask_names(t)
     return re.sub(r'(\[(?:事务所|数据库|姓名)\])+', r'\1', t)   # 合并重复占位
