@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.services.materials import extract_text
 
 RULES = [
-    (re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+'), '[邮箱]'),
+    (re.compile(r'[\w.+-]+\s*@\s*[\w-]+(?:\s*\.\s*[\w-]+)+'), '[邮箱]'),   # OCR 常在 @ 前后插空格
     (re.compile(r'\b1[3-9]\d{9}\b'), '[手机号]'),
     (re.compile(r'\b\d{15,18}[\dXx]?\b'), '[证件号]'),
     (re.compile(r'\b(?:\d[ -]?){15,19}\b'), '[账号]'),
