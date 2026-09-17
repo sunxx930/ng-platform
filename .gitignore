@@ -25,3 +25,6 @@ build/
 dist/
 *.dmg
 *.pkg
+scripts/ocr
+scripts/pdftext
+scripts/pdfocr

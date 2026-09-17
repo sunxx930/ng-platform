@@ -71,8 +71,31 @@ def _read_xlsx(path: Path) -> str:
             ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
             for si in root.iter(ns + "si"):
                 shared.append("".join(t.text or "" for t in si.iter(ns + "t")))
+        # 工作表名 → 部件路径（经 workbook.xml + rels），保证"每个 tab 都抽且标注"
+        sheet_map = []      # [(name, part)]
+        try:
+            wb = ET.fromstring(z.read("xl/workbook.xml").decode("utf-8", "replace"))
+            rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels").decode("utf-8", "replace"))
+            rid2target = {r.get("Id"): r.get("Target") for r in rels}
+            nsr = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+            ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+            for sh in wb.iter(ns + "sheet"):
+                tgt = rid2target.get(sh.get(nsr + "id"), "")
+                part = tgt.lstrip("/") if tgt.startswith("/") else ("xl/" + tgt if tgt and not tgt.startswith("xl/") else tgt)
+                sheet_map.append((sh.get("name", ""), part))
+        except Exception:      # 老式/精简 xlsx 无 workbook.xml → 回退按序号
+            sheet_map = []
+        if not sheet_map:
+            sheet_map = [("", n) for n in sorted(x for x in z.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml$", x))]
         rows = []
-        for n in sorted(x for x in z.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml$", x)):
+        for name, n in sheet_map:
+            if n not in z.namelist():
+                continue
+            if name:
+                rows.append(f"[工作表] {name}")
+            if not n.startswith("xl/worksheets/"):
+                rows.append("[图表页/其他] " + n)
+                continue
             root = ET.fromstring(z.read(n).decode("utf-8", "replace"))
             ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
             for row in root.iter(ns + "row"):
