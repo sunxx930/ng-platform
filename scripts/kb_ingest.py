@@ -115,9 +115,17 @@ def client_mask(text: str, stem: str, map_file: Path):
     name = _company_of(stem)
     code = next((c for c, n in m.items() if n == name), None)
     if code is None:
-        prefix = '个人' if (len(name) <= 3 and re.fullmatch(r'[\u4e00-\u9fa5]+', name) and name[0] in _SURNAME) else '公司'
+        if ctype in ('person','company'):
+            prefix = '个人' if ctype=='person' else '公司'
+        else:
+            prefix = '个人' if (len(name)==3 and re.fullmatch(r'[\u4e00-\u9fa5]+', name) and name[0] in _SURNAME) else '公司'
         same = sum(1 for k in m if k.startswith(prefix))
-        code = f"{prefix}{chr(65 + same) if same < 26 else same+1}"
+        def _suf(n):
+            out=''
+            while True:
+                out = chr(65+n%26) + out; n = n//26 - 1
+                if n < 0: return out
+        code = f"{prefix}{_suf(same)}"
         m[code] = name
         map_file.parent.mkdir(parents=True, exist_ok=True)
         map_file.write_text(json.dumps(m, ensure_ascii=False, indent=1), encoding='utf-8')
@@ -215,6 +223,7 @@ def main():
     def opt(k, d): return args[args.index(k)+1] if k in args else d
     typ, topic = opt('--type', '方法论'), opt('--topic', '出海税务')
     cname = opt('--client-name', '')
+    ctype = opt('--client-type', '')   # person|company 可强制
     if src.is_dir():                      # 批量：吃整个文件夹的 Office/文本
         exts = ('.pptx', '.docx', '.doc', '.xlsx', '.pdf', '.txt', '.md')
         files = sorted(f for f in src.rglob('*') if f.suffix.lower() in exts and not f.name.startswith('~$'))
