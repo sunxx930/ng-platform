@@ -160,7 +160,10 @@ def mask_all(text: str, m: dict) -> str:
             if re.fullmatch(r"[A-Za-z0-9&.'\- ]+", v):
                 # 空白容错：OCR 常把 "Meiya Shanghai" 排成 "Meiya  Shanghai"
                 body = r'\s+'.join(re.escape(w) for w in v.split())
-                text = re.sub(r'(?<![A-Za-z])' + body + r'(?![A-Za-z])', code, text)
+                # 混合大小写的品牌(如 Etekcity/VeSync)放宽后边界——OCR 会拼成 EtekcityPage；
+                # 全大写/全小写(如 ABB/NLABB)保留后边界，防切词
+                tail = r'' if (re.search(r'[A-Z]', v) and re.search(r'[a-z]', v)) else r'(?![A-Za-z])'
+                text = re.sub(r'(?<![A-Za-z])' + body + tail, code, text)
             else:
                 # 中文变体同样容忍 OCR 在字间插空格（如「高尔夫球 俱乐部」）
                 text = re.sub(r'\s*'.join(re.escape(ch) for ch in v), code, text)
@@ -248,6 +251,7 @@ def _roster_sub(m):
 
 
 def desensitize(t: str) -> str:
+    t = re.sub(r'([A-Za-z]{4,})\1', r'\1', t)   # OCR 常把页眉连写成 EtekcityEtekcity
     for rx, rep in RULES:
         t = rx.sub(rep, t)
     t = _ROSTER.sub(_roster_sub, t)          # 客户名册整段替换
