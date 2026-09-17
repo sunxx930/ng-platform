@@ -22,7 +22,7 @@ RULES = [
     (re.compile(r'毕马威|KPMG'), '[事务所]'),
     (re.compile(r'Ernst\s*&\s*Young', re.I), '[事务所]'),
     (re.compile(r'Wolters\s*Kluwer|威科先行'), '[数据库]'),
-    (re.compile(r'[（(]?中国[)）]?企业咨询有限公司|企业咨询[（(]中国[)）]有限公司|毕威企业咨[询]?[（(]中国[)）][有]?公司'), '[事务所]'),
+    (re.compile(r'(?:\[事务所\]\s*)?企业咨询\s*[（(]\s*中国\s*[)）]\s*有限(?:责任)?公司'), '[事务所]'),
 ]
 
 # ---------- 客户案脱敏（--client-case） ----------
@@ -157,7 +157,8 @@ def desensitize(t: str) -> str:
         t = rx.sub(rep, t)
     for n in _watch_names():        # 本地人名观察表（全局替换）
         t = t.replace(n, '[姓名]')
-    return _mask_names(t)
+    t = _mask_names(t)
+    return re.sub(r'(\[(?:事务所|数据库|姓名)\])+', r'\1', t)   # 合并重复占位
 
 def slug(s: str) -> str:
     s = re.sub(r'[^\w一-龥]+', '-', s).strip('-')
