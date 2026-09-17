@@ -26,6 +26,8 @@ RULES = [
     (re.compile(r'德勤华永|德勤|Deloitte'), '[事务所]'),
     (re.compile(r'毕马威|KPMG'), '[事务所]'),
     (re.compile(r'Ernst\s*&\s*Young', re.I), '[事务所]'),
+    # 本所自有品牌（用户 2026-09-18 要求一并掩掉，与外部事务所同等待遇）
+    (re.compile(r'壹诺家办|壹诺|FinTaxLega\s*l(?:研究院)?'), '[事务所]'),
     (re.compile(r'Wolters\s*Kluwer|威科先行'), '[数据库]'),
     (re.compile(r'(?:\[事务所\]\s*)?企业咨询\s*[（(]\s*中国\s*[)）]\s*有限(?:责任)?公司'), '[事务所]'),
 ]
