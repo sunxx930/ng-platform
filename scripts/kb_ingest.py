@@ -163,7 +163,10 @@ def desensitize(t: str) -> str:
     for rx, rep in RULES:
         t = rx.sub(rep, t)
     for n in sorted(_watch_names(), key=len, reverse=True):   # 长名优先
-        t = t.replace(n, '[姓名]')
+        if ' ' in n.strip():
+            t = re.sub(r'\s+'.join(re.escape(w) for w in n.split()), '[姓名]', t)  # 空格容错
+        else:
+            t = t.replace(n, '[姓名]')
     t = _mask_names(t)
     return re.sub(r'(\[(?:事务所|数据库|姓名)\])+', r'\1', t)   # 合并重复占位
 
