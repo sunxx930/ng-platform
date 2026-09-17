@@ -249,6 +249,7 @@ def desensitize(t: str) -> str:
     for rx, rep in RULES:
         t = rx.sub(rep, t)
     t = _ROSTER.sub(_roster_sub, t)          # 客户名册整段替换
+    t = re.sub(r'\[事务所\]\s*(?:研究院|研究所|深圳分公司|分公司)', '[事务所]', t)   # 合并残留后缀
     for n in sorted(_watch_names(), key=len, reverse=True):   # 长名优先
         if ' ' in n.strip():
             t = re.sub(r'\s+'.join(re.escape(w) for w in n.split()), '[姓名]', t)  # 空格容错
