@@ -92,7 +92,9 @@ def _variants(name: str):
                '工业','新技术','国际','中国','中华','实业','有限'}
     GEO = {'北京','上海','深圳','广州','惠州','湖南','广西','重庆','昌江','天津','江苏','浙江',
            '福建','山东','河南','四川','湖北','广东','海南','横琴','香港','新加坡','云南','贵州'}
-    for k in range(2, len(b2) + 1):          # 品牌前缀/尾字，排除地名与行业通用词
+    import re as _re
+    cjk = bool(_re.fullmatch(r'[\u4e00-\u9fa5]+', b2))
+    for k in (range(2, len(b2) + 1) if cjk else []):   # 仅中文品牌做前缀/尾字；英文只整体
         pre, tail = b2[:k], b2[-k:]
         if pre not in GENERIC and pre not in GEO:
             vs.add(pre)
@@ -102,7 +104,7 @@ def _variants(name: str):
         for suf in SUF:
             vs.add(f"{brand}（{inner}）{suf}"); vs.add(f"{b2}（{inner}）{suf}")
         vs.add(f"{brand}（{inner}）"); vs.add(f"{b2}（{inner}）")
-    for tok in re.findall(r'[A-Za-z][A-Za-z0-9&]{1,}', name):   # 英文简称 TCL/OPPO
+    for tok in re.findall(r'[A-Za-z][A-Za-z0-9&]{2,}', name):   # 英文整体(≥3)，不切子串
         vs.add(tok)
     return sorted((v for v in vs if len(v) >= 2), key=len, reverse=True)
 
