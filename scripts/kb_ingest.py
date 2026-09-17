@@ -202,7 +202,7 @@ def main():
     typ, topic = opt('--type', '方法论'), opt('--topic', '出海税务')
     cname = opt('--client-name', '')
     if src.is_dir():                      # 批量：吃整个文件夹的 Office/文本
-        exts = ('.pptx', '.docx', '.xlsx', '.pdf', '.txt', '.md')
+        exts = ('.pptx', '.docx', '.doc', '.xlsx', '.pdf', '.txt', '.md')
         files = sorted(f for f in src.rglob('*') if f.suffix.lower() in exts and not f.name.startswith('~$'))
         print(f"批量入库 {len(files)} 个文件 …")
         for f in files:
@@ -226,6 +226,14 @@ def main():
                 note = 'pdf: 抽取失败'
         elif not text.strip():
             note = 'pdf: 无文字(可能是扫描件，需 OCR)'
+    elif src.suffix.lower() == '.doc':    # 老版 Word → mac textutil
+        import subprocess
+        try:
+            text = subprocess.run(['textutil', '-convert', 'txt', '-stdout', str(src)],
+                                  capture_output=True, text=True, timeout=120).stdout
+        except Exception:
+            text = ''
+        note = 'ok(doc)' if text.strip() else 'doc: 抽取失败'
     else:
         text, note = extract_text(src)
     ocr_txt = '' if '--no-ocr' in args else ocr_embedded(src)
@@ -239,8 +247,10 @@ def main():
     code = None
     if '--client-case' in args:
         body, code = client_mask(body, cname or src.stem, base/'_client_map.json')
-        name_slug, title, sens = _case_slug(src.stem, code, hid), f"{code} 税务复核备忘录", \
-            "high(客户案·公司名代号化/金额量级化·待人工复核；人名未系统处理)"
+        kind = slug(topic) or '资料'
+        name_slug = f"客户案-{code}-{kind}-{hid}"
+        title = f"{code} {topic or '客户资料'}"
+        sens = "high(客户案·公司名代号化/金额量级化·待人工复核；人名未系统处理)"
         source = f"{code}（原件名已隐）"
     else:
         name_slug, title, sens, source = f"{slug(src.stem)}-{hid}", src.stem, \
