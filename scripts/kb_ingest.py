@@ -108,7 +108,7 @@ def _variants(name: str):
         vs.add(tok)
     return sorted((v for v in vs if len(v) >= 2), key=len, reverse=True)
 
-def client_mask(text: str, stem: str, map_file: Path):
+def client_mask(text: str, stem: str, map_file: Path, ctype: str = ''):
     """公司名→代号（映射留本地，不入库）；金额量级化。返回 (文本, 代号)。"""
     import json
     m = json.loads(map_file.read_text(encoding='utf-8')) if map_file.exists() else {}
@@ -269,7 +269,7 @@ def main():
     outdir = base/'knowledge'/'tax-cases'; outdir.mkdir(parents=True, exist_ok=True)
     code = None
     if '--client-case' in args:
-        body, code = client_mask(body, cname or src.stem, base/'_client_map.json')
+        body, code = client_mask(body, cname or src.stem, base/'_client_map.json', ctype)
         kind = slug(topic) or '资料'
         name_slug = f"客户案-{code}-{kind}-{hid}"
         title = f"{code} {topic or '客户资料'}"
