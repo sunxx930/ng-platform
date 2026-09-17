@@ -15,6 +15,13 @@ RULES = [
     (re.compile(r'\b\d{15,18}[\dXx]?\b'), '[证件号]'),
     (re.compile(r'\b(?:\d[ -]?){15,19}\b'), '[账号]'),
     (re.compile(r'(地址|住所)[：:]\s*\S+'), r'\1：[地址]'),
+    # 中介/事务所名（非客户，但同样不该留）
+    (re.compile(r'安永华明会计师事务所（特殊普通合伙）|安永华明会计师事务所|安永华明|安永（中国）企业咨询有限公司|安永（中国）|安永'), '[事务所]'),
+    (re.compile(r'普华永道|PwC|PricewaterhouseCoopers'), '[事务所]'),
+    (re.compile(r'德勤华永|德勤|Deloitte'), '[事务所]'),
+    (re.compile(r'毕马威|KPMG'), '[事务所]'),
+    (re.compile(r'Ernst\s*&\s*Young', re.I), '[事务所]'),
+    (re.compile(r'Wolters\s*Kluwer|威科先行'), '[数据库]'),
 ]
 
 # ---------- 客户案脱敏（--client-case） ----------
