@@ -131,7 +131,7 @@ def _mask_names(t: str) -> str:
     保守：要求首字为常见姓氏、长度 2–4、且不含公司/机构类停用字，避免误伤"分公司/公司"等。
     """
     STOP = set("公司事务所银行集团中心部门有限经办负责管理处科研院校会局厂店区市县省大中")
-    FIELDS = r'(姓名|联系人|法定代表人|法人代表|负责人|经办人|编制人|复核人|审核人|签字|授权代表|股东|董事|监事|执行董事|总经理|副总经理|财务总监|董秘|合伙人)'
+    FIELDS = r'(姓名|联系人|人员|参会人员|参会人|参与人|出席人|与会人员|法定代表人|法人代表|负责人|经办人|编制人|复核人|审核人|签字|授权代表|股东|董事|监事|执行董事|总经理|副总经理|财务总监|董秘|合伙人)'
 
     def ok(n: str) -> bool:
         return 2 <= len(n) <= 4 and n[0] in _SURNAME and not any(c in STOP for c in n[1:])
@@ -142,9 +142,20 @@ def _mask_names(t: str) -> str:
     return re.sub(rf'{FIELDS}\s*[：:]?\s*([\u4e00-\u9fa5]{{2,4}})', rep, t)
 
 
+def _watch_names() -> list:
+    import json
+    f = Path(os.environ.get('NG_HOME', Path.home()/'.ng-platform'))/'_person_watch.json'
+    try:
+        return json.loads(f.read_text(encoding='utf-8')) if f.exists() else []
+    except Exception:
+        return []
+
+
 def desensitize(t: str) -> str:
     for rx, rep in RULES:
         t = rx.sub(rep, t)
+    for n in _watch_names():        # 本地人名观察表（全局替换）
+        t = t.replace(n, '[姓名]')
     return _mask_names(t)
 
 def slug(s: str) -> str:
@@ -189,6 +200,7 @@ def main():
     src = Path(sys.argv[1]); args = sys.argv[2:]
     def opt(k, d): return args[args.index(k)+1] if k in args else d
     typ, topic = opt('--type', '方法论'), opt('--topic', '出海税务')
+    cname = opt('--client-name', '')
     if src.is_dir():                      # 批量：吃整个文件夹的 Office/文本
         exts = ('.pptx', '.docx', '.xlsx', '.pdf', '.txt', '.md')
         files = sorted(f for f in src.rglob('*') if f.suffix.lower() in exts and not f.name.startswith('~$'))
@@ -226,7 +238,7 @@ def main():
     outdir = base/'knowledge'/'tax-cases'; outdir.mkdir(parents=True, exist_ok=True)
     code = None
     if '--client-case' in args:
-        body, code = client_mask(body, src.stem, base/'_client_map.json')
+        body, code = client_mask(body, cname or src.stem, base/'_client_map.json')
         name_slug, title, sens = _case_slug(src.stem, code, hid), f"{code} 税务复核备忘录", \
             "high(客户案·公司名代号化/金额量级化·待人工复核；人名未系统处理)"
         source = f"{code}（原件名已隐）"
