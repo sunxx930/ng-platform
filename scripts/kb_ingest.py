@@ -115,7 +115,7 @@ def client_mask(text: str, stem: str, map_file: Path):
     name = _company_of(stem)
     code = next((c for c, n in m.items() if n == name), None)
     if code is None:
-        prefix = '个人' if re.fullmatch(r'[\u4e00-\u9fa5]{2,4}', name) else '公司'
+        prefix = '个人' if (len(name) <= 3 and re.fullmatch(r'[\u4e00-\u9fa5]+', name) and name[0] in _SURNAME) else '公司'
         same = sum(1 for k in m if k.startswith(prefix))
         code = f"{prefix}{chr(65 + same) if same < 26 else same+1}"
         m[code] = name
