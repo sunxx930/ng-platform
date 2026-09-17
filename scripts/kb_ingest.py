@@ -56,64 +56,103 @@ def _company_of(stem: str) -> str:
     return parts[0] if parts else stem
 
 
-def _variants(name: str):
-    if '/' in name:                       # 多别名（中英文）
-        out=set()
-        for a in name.split('/'):
-            out |= set(_variants(a.strip()))
-        return sorted(out, key=len, reverse=True)
-    """只按公司名结构生成变体，避免误伤通用词（曾把"科技"当简称）。
+_SUF = ('股份有限公司', '有限责任公司', '有限公司', '集团有限公司', '集团', '公司')
 
-    变体：全名 / 逐年去公司后缀 / 品牌前缀(2..len) / 括号全称(品牌+地区+后缀) / 英文简称。
-    """
-    vs = {name}
-    SUF = ('股份有限公司', '有限责任公司', '有限公司', '集团有限公司', '集团', '公司')
-    core = name
-    prev = None
-    while core and core != prev:
-        prev = core
-        for suf in SUF:
-            if core.endswith(suf):
-                core = core[:-len(suf)]
-        if len(core) >= 3:
-            vs.add(core)
-    brand = re.sub(r'[（(].*?[)）]', '', name).strip()
-    b2 = brand
-    prev = None
-    while b2 and b2 != prev:
-        prev = b2
-        for suf in SUF:
-            if b2.endswith(suf):
-                b2 = b2[:-len(suf)]
-    GENERIC = {'科技','技术','信息','网络','智能','电子','实业','投资','控股','集团','发展',
-               '贸易','服务','咨询','管理','金融','银行','证券','基金','保险','地产','建设',
-               '工程','传媒','文化','教育','医疗','健康','食品','农业','能源','环保','制造',
-               '机械','汽车','物流','供应','销售','材料','生物','医药','化工','电力','水泥',
-               '工业','新技术','国际','中国','中华','实业','有限'}
-    GEO = {'北京','上海','深圳','广州','惠州','湖南','广西','重庆','昌江','天津','江苏','浙江',
-           '福建','山东','河南','四川','湖北','广东','海南','横琴','香港','新加坡','云南','贵州'}
-    import re as _re
-    cjk = bool(_re.fullmatch(r'[\u4e00-\u9fa5]+', b2))
-    for k in (range(2, len(b2) + 1) if cjk else []):   # 仅中文品牌做前缀/尾字；英文只整体
-        pre, tail = b2[:k], b2[-k:]
-        if pre not in GENERIC and pre not in GEO:
-            vs.add(pre)
-        if tail not in GENERIC and tail not in GEO:
-            vs.add(tail)
-    for inner in re.findall(r'[（(]([^）)]{2,})[)）]', name):   # 括号地区 → 组装全称变体
-        for suf in SUF:
-            vs.add(f"{brand}（{inner}）{suf}"); vs.add(f"{b2}（{inner}）{suf}")
-        vs.add(f"{brand}（{inner}）"); vs.add(f"{b2}（{inner}）")
-    for tok in re.findall(r'[A-Za-z][A-Za-z0-9&]{2,}', name):   # 英文整体(≥3)，不切子串
+_GENERIC = {'科技','技术','信息','网络','智能','电子','实业','投资','控股','集团','发展',
+            '贸易','服务','咨询','管理','金融','银行','证券','基金','保险','地产','建设',
+            '工程','传媒','文化','教育','医疗','健康','食品','农业','能源','环保','制造',
+            '机械','汽车','物流','供应','销售','材料','生物','医药','化工','电力','水泥',
+            '工业','新技术','国际','中国','中华','有限','股份','责任'}
+
+_GEO_WORDS = ('北京','上海','深圳','广州','惠州','湖南','广西','重庆','昌江','天津','江苏','浙江',
+              '福建','山东','河南','四川','湖北','广东','海南','横琴','香港','新加坡','云南','贵州',
+              '东莞','佛山','珠海','中山','南京','南昌','杭州','苏州','成都','武汉','西安','青岛',
+              '厦门','大连','宁波','无锡','合肥','长沙','郑州','济南','福州','泉州','温州','绍兴')
+_GEO_RX = re.compile(r'^(?:' + '|'.join(sorted(_GEO_WORDS, key=len, reverse=True)) +
+                     r')(?:市|省|自治区|特别行政区|地区|新区|经济特区|自治州|县|区)?$')
+
+
+def _strip_suffixes(s):
+    """逐级去掉公司后缀，返回所有长度 ≥3 的中间形式（从长到短）。"""
+    out, cur, prev = [], s, None
+    while cur and cur != prev:
+        prev = cur
+        for suf in _SUF:
+            if cur.endswith(suf):
+                cur = cur[:-len(suf)]
+        if len(cur) >= 3:
+            out.append(cur)
+    return out
+
+
+def _core_variants(vs, s):
+    """全名 / 去后缀核心 / 括号全称 / 英文整体（≥3，不切子串）。"""
+    vs.add(s)
+    brand = re.sub(r'[（(].*?[)）]', '', s).strip()
+    for base in (s, brand):
+        for c in _strip_suffixes(base):
+            vs.add(c)
+    core = _strip_suffixes(brand)
+    core = core[-1] if core else brand
+    for inner in re.findall(r'[（(]([^）)]{2,})[)）]', s):     # 括号地区 → 组装全称变体
+        for suf in _SUF:
+            vs.add(f"{brand}（{inner}）{suf}")
+            vs.add(f"{core}（{inner}）{suf}")
+        vs.add(f"{brand}（{inner}）")
+    for tok in re.findall(r'[A-Za-z][A-Za-z0-9&]{2,}', s):   # 英文名整体，绝不切子串
         vs.add(tok)
+
+
+def _prefix_variants(vs, s):
+    """仅主名生成「品牌前缀」简称（≥3 字）。
+
+    不生成词尾碎片：历史版本取 tail 曾把「车销售」「融服务」「信服」当简称，
+    配合 str.replace 会把「机动车销售」「金融服务」「电信服务」等普通词改坏。
+    """
+    b = re.sub(r'[（(].*?[)）]', '', s).strip()
+    st = _strip_suffixes(b)
+    b = st[-1] if st else b
+    if not re.fullmatch(r'[\u4e00-\u9fa5]+', b):
+        return                                                # 非纯中文（英文名）不做前缀
+    for k in range(3, len(b)):
+        pre = b[:k]
+        if pre in _GENERIC or _GEO_RX.match(pre):
+            continue                                          # 通用词 / 省市地名 → 跳过
+        if len(pre) <= 3 and pre[:2] in _GEO_WORDS:
+            continue                                          # 地名+1字：如"深圳香"会误伤"深圳香港"
+        vs.add(pre)
+
+
+def _variants(name: str):
+    parts = [p.strip() for p in name.split('/') if p.strip()]
+    vs = set()
+    for i, p in enumerate(parts):
+        _core_variants(vs, p)                                  # 每个别名都取整体
+        if i == 0:
+            _prefix_variants(vs, p)                            # 只有主名做前缀简称
     return sorted((v for v in vs if len(v) >= 2), key=len, reverse=True)
+
+
+
+def apply_code(text: str, code: str, variants):
+    """把客户名变体替换为代号。纯 ASCII 变体加词边界，避免 NLABB→NL公司AC 这类切词。"""
+    for v in variants:                                        # variants 已按长度降序
+        if re.fullmatch(r'[A-Za-z0-9&.\'\- ]+', v):
+            text = re.sub(r'(?<![A-Za-z])' + re.escape(v) + r'(?![A-Za-z])', code, text)
+        else:
+            text = text.replace(v, code)
+    return text
 
 def client_mask(text: str, stem: str, map_file: Path, ctype: str = ''):
     """公司名→代号（映射留本地，不入库）；金额量级化。返回 (文本, 代号)。"""
     import json
     m = json.loads(map_file.read_text(encoding='utf-8')) if map_file.exists() else {}
-    name = _company_of(stem)
-    code = next((c for c, n in m.items() if n == name), None)
+    raw = stem.strip()
+    name = raw
+    code = next((c for c, n in m.items() if n == raw), None)   # 显式 --client-name 优先精确匹配
+    if code is None:
+        name = _company_of(raw)                                # 否则回退：按文件名推断客户名
+        code = next((c for c, n in m.items() if n == name), None)
     if code is None:
         if ctype in ('person','company'):
             prefix = '个人' if ctype=='person' else '公司'
@@ -129,8 +168,7 @@ def client_mask(text: str, stem: str, map_file: Path, ctype: str = ''):
         m[code] = name
         map_file.parent.mkdir(parents=True, exist_ok=True)
         map_file.write_text(json.dumps(m, ensure_ascii=False, indent=1), encoding='utf-8')
-    for v in _variants(name):
-        text = text.replace(v, code)
+    text = apply_code(text, code, _variants(name))
     return mask_amounts(text), code
 
 
