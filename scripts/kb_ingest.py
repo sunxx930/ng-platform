@@ -115,7 +115,9 @@ def client_mask(text: str, stem: str, map_file: Path):
     name = _company_of(stem)
     code = next((c for c, n in m.items() if n == name), None)
     if code is None:
-        code = f"公司{chr(65 + len(m)) if len(m) < 26 else len(m)+1}"
+        prefix = '个人' if re.fullmatch(r'[\u4e00-\u9fa5]{2,4}', name) else '公司'
+        same = sum(1 for k in m if k.startswith(prefix))
+        code = f"{prefix}{chr(65 + same) if same < 26 else same+1}"
         m[code] = name
         map_file.parent.mkdir(parents=True, exist_ok=True)
         map_file.write_text(json.dumps(m, ensure_ascii=False, indent=1), encoding='utf-8')
