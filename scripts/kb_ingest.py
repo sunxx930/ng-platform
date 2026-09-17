@@ -57,6 +57,11 @@ def _company_of(stem: str) -> str:
 
 
 def _variants(name: str):
+    if '/' in name:                       # 多别名（中英文）
+        out=set()
+        for a in name.split('/'):
+            out |= set(_variants(a.strip()))
+        return sorted(out, key=len, reverse=True)
     """只按公司名结构生成变体，避免误伤通用词（曾把"科技"当简称）。
 
     变体：全名 / 逐年去公司后缀 / 品牌前缀(2..len) / 括号全称(品牌+地区+后缀) / 英文简称。
