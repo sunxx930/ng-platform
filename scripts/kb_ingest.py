@@ -126,10 +126,10 @@ def _prefix_variants(vs, s):
 def _variants(name: str):
     parts = [p.strip() for p in name.split('/') if p.strip()]
     vs = set()
-    for i, p in enumerate(parts):
-        _core_variants(vs, p)                                  # 每个别名都取整体
-        if i == 0:
-            _prefix_variants(vs, p)                            # 只有主名做前缀简称
+    for p in parts:
+        _core_variants(vs, p)                                  # 每个别名只取整体，绝不切前缀/词尾
+        # 历史教训：任何"自动生成简称"都会撞普通词（可持续→公司AU、车销售→公司A、深圳市→公司AF）。
+        # 简称一律改为在映射表里显式写别名，例如 公司A=比亚迪汽车销售有限公司/比亚迪
     return sorted((v for v in vs if len(v) >= 2), key=len, reverse=True)
 
 
