@@ -337,7 +337,8 @@ def main():
         sens = "high(客户案·公司名代号化/金额量级化·待人工复核；人名未系统处理)"
         source = f"{code}（原件名已隐）"
     else:
-        name_slug, title, sens, source = f"{slug(src.stem)}-{hid}", src.stem, \
+        title_ = opt('--title', '') or src.stem          # 文件名笼统时用 --title 指定
+        name_slug, title, sens, source = f"{slug(title_)}-{hid}", title_, \
             "low(已脱敏·待人工复核)", src.name
     out = outdir/f"{name_slug}.md"
     fm = (f"---\ntitle: {title}\ntype: {typ}\ntopic: {topic}\n"
