@@ -99,8 +99,11 @@ def _core_variants(vs, s):
             vs.add(f"{brand}（{inner}）{suf}")
             vs.add(f"{core}（{inner}）{suf}")
         vs.add(f"{brand}（{inner}）")
-    for tok in re.findall(r'[A-Za-z][A-Za-z0-9&]{2,}', s):   # 英文名整体，绝不切子串
-        vs.add(tok)
+    if re.search(r'[\u4e00-\u9fa5]', s):                   # 只有含中文的名字才抽内嵌英文品牌
+        for tok in re.findall(r'[A-Za-z][A-Za-z0-9&]{2,}', s):
+            vs.add(tok)
+    # 纯英文名（如 CGN Mining Company Limited）整串已加入，绝不按词拆
+    # —— 历史事故：拆词后 Company/Global/Energy 等普通英文词成了替换目标
 
 
 def _prefix_variants(vs, s):
@@ -141,12 +144,14 @@ def mask_all(text: str, m: dict) -> str:
     长名优先，避免短品牌名先吞掉长实体名（如 "中广核" 先把 "中广核华盛投资有限公司" 吃掉）。
     """
     pairs = [(v, c) for c, n in m.items() for v in _variants(n)]
-    pairs.sort(key=lambda x: len(x[0]), reverse=True)
-    for v, code in pairs:
-        if re.fullmatch(r"[A-Za-z0-9&.'\- ]+", v):
-            text = re.sub(r'(?<![A-Za-z])' + re.escape(v) + r'(?![A-Za-z])', code, text)
-        else:
-            text = text.replace(v, code)
+    ascii_pairs = [(v, c) for v, c in pairs if re.fullmatch(r"[A-Za-z0-9&.'\- ]+", v)]
+    cjk_pairs = [(v, c) for v, c in pairs if not re.fullmatch(r"[A-Za-z0-9&.'\- ]+", v)]
+    for group in (ascii_pairs, cjk_pairs):          # 先英文后中文：中文换代号后紧跟的英文会被词边界挡住
+        for v, code in sorted(group, key=lambda x: len(x[0]), reverse=True):
+            if re.fullmatch(r"[A-Za-z0-9&.'\- ]+", v):
+                text = re.sub(r'(?<![A-Za-z])' + re.escape(v) + r'(?![A-Za-z])', code, text)
+            else:
+                text = text.replace(v, code)
     return text
 
 def apply_code(text: str, code: str, variants):
