@@ -27,13 +27,21 @@ class MaterialError(Exception):
 
 
 def _read_docx(path: Path) -> str:
+    W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    out = []
     with zipfile.ZipFile(path) as z:
-        xml = z.read("word/document.xml").decode("utf-8", "replace")
-    root = ET.fromstring(xml)
-    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-    paras = ["".join(t.text or "" for t in p.iter("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t"))
-             for p in root.iter("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p")]
-    return "\n".join(p for p in paras if p.strip())
+        names = [n for n in z.namelist() if re.match(
+            r"word/(document|header\d+|footer\d+|footnotes|endnotes)\.xml$", n)]
+        for n in names:
+            try:
+                root = ET.fromstring(z.read(n).decode("utf-8", "replace"))
+            except Exception:
+                continue
+            paras = ["".join(t.text or "" for t in p.iter(W + "t")) for p in root.iter(W + "p")]
+            line = "\n".join(p for p in paras if p.strip())
+            if line.strip():
+                out.append(line)
+    return "\n".join(out)
 
 
 def _read_pptx(path: Path) -> str:
