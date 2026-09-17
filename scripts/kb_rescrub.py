@@ -8,7 +8,7 @@ import json, sys, re, shutil, time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from kb_ingest import _variants, desensitize, apply_code
+from kb_ingest import _variants, desensitize, apply_code, mask_all
 base = Path(__import__('os').environ.get('NG_HOME', Path.home()/'.ng-platform'))
 m = json.loads((base/'_client_map.json').read_text(encoding='utf-8'))
 root = base/'knowledge'/'tax-cases'
@@ -34,8 +34,7 @@ n = 0
 for f in sorted(root.glob('*.md')):
     t = f.read_text(encoding='utf-8'); o = t
     t = desensitize(t)                      # 中介/事务所/联系方式等固定规则
-    for code, name in m.items():
-        t = apply_code(t, code, _variants(name))
+    t = mask_all(t, m)
     # 标题/来源也脱敏；必要时重命名文件
     lines = t.splitlines()
     for i, ln in enumerate(lines[:10]):

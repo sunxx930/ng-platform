@@ -134,6 +134,21 @@ def _variants(name: str):
 
 
 
+
+def mask_all(text: str, m: dict) -> str:
+    """全局脱敏：所有代号的变体按长度从长到短统一替换。
+
+    长名优先，避免短品牌名先吞掉长实体名（如 "中广核" 先把 "中广核华盛投资有限公司" 吃掉）。
+    """
+    pairs = [(v, c) for c, n in m.items() for v in _variants(n)]
+    pairs.sort(key=lambda x: len(x[0]), reverse=True)
+    for v, code in pairs:
+        if re.fullmatch(r"[A-Za-z0-9&.'\- ]+", v):
+            text = re.sub(r'(?<![A-Za-z])' + re.escape(v) + r'(?![A-Za-z])', code, text)
+        else:
+            text = text.replace(v, code)
+    return text
+
 def apply_code(text: str, code: str, variants):
     """把客户名变体替换为代号。纯 ASCII 变体加词边界，避免 NLABB→NL公司AC 这类切词。"""
     for v in variants:                                        # variants 已按长度降序
@@ -168,7 +183,7 @@ def client_mask(text: str, stem: str, map_file: Path, ctype: str = ''):
         m[code] = name
         map_file.parent.mkdir(parents=True, exist_ok=True)
         map_file.write_text(json.dumps(m, ensure_ascii=False, indent=1), encoding='utf-8')
-    text = apply_code(text, code, _variants(name))
+    text = mask_all(text, m)                                   # 全局按长度优先替换
     return mask_amounts(text), code
 
 
