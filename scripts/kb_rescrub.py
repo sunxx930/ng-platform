@@ -15,6 +15,15 @@ for f in sorted(root.glob('*.md')):
     for code, name in m.items():
         for v in _variants(name):
             t = t.replace(v, code)
-    if t != o:
+    # 标题/来源也脱敏；必要时重命名文件
+    lines = t.splitlines()
+    for i, ln in enumerate(lines[:10]):
+        if ln.startswith(('title:', 'source:')):
+            lines[i] = ln.split(':',1)[0] + ': ' + desensitize(ln.split(':',1)[1].strip())
+    t = '\n'.join(lines) + ('\n' if t.endswith('\n') else '')
+    newname = re.sub(r'安永|普华永道|德勤|毕马威|PwC|KPMG|Deloitte|Ernst\s*&\s*Young', '事务所', f.name)
+    if t != o or newname != f.name:
+        if newname != f.name:
+            f.rename(f.with_name(newname)); f = f.with_name(newname)
         f.write_text(t, encoding='utf-8'); n += 1
 print(f"二次脱敏完成：改写 {n} 个文件，映射 {len(m)} 家")
