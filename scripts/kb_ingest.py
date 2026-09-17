@@ -235,9 +235,18 @@ def _watch_names() -> list:
         return []
 
 
+# 客户名册：带标签的长顿号枚举（研讨会课件常整段罗列客户名 = 公开客户清单）
+_ROSTER = re.compile(r'((?:企业)?客户|金融机构|合作伙伴|服务的客户)\s*[:：]\s*([^。；\n]{20,})')
+
+
+def _roster_sub(m):
+    return f'{m.group(1)}：[客户名单]' if m.group(2).count('、') >= 4 else m.group(0)
+
+
 def desensitize(t: str) -> str:
     for rx, rep in RULES:
         t = rx.sub(rep, t)
+    t = _ROSTER.sub(_roster_sub, t)          # 客户名册整段替换
     for n in sorted(_watch_names(), key=len, reverse=True):   # 长名优先
         if ' ' in n.strip():
             t = re.sub(r'\s+'.join(re.escape(w) for w in n.split()), '[姓名]', t)  # 空格容错
