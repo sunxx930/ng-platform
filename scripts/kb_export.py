@@ -75,10 +75,14 @@ def build_relabel(texts, seed):
     return {c: f'实体{_label(i)}' for c, i in zip(seen, labels)}
 
 
-def generalize(text, relabel):
+def generalize(text, relabel, aggressive=True):
+    """aggressive=True(客户案)：抹掉可反推的事实。
+    aggressive=False(通用资料)：只换代号，**保留行业/属地/比例/日期**——那些正是法规的正文。"""
     # 1) 代号重编
     for c, lab in relabel.items():
         text = text.replace(c, lab)
+    if not aggressive:
+        return text
     # 2) 中国公司名兜底（工作版漏掩的）
     text = CN_ENTITY.sub('[实体]', text)
     # 3) 英文实体模式
@@ -100,6 +104,11 @@ def generalize(text, relabel):
     # 7) 日期粗化到年
     text = re.sub(r'(20\d\d)\s*年\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日)?', r'\1年', text)
     return text
+
+
+def slug(s):
+    s = re.sub(r'[^\w一-龥]+', '-', s or '').strip('-')
+    return s[:40]
 
 
 def parse(raw):
@@ -151,7 +160,8 @@ def main():
     if a.audit:
         print(f"反推测试（{len(entries)} 条，seed={seed}）")
         for f, meta, body in entries:
-            g = generalize(body, relabel)
+            g = generalize(body, relabel, aggressive=meta.get('type') != '方法论'
+                           and f.name.startswith('客户案-'))
             clues = audit(g)
             if clues:
                 print(f"\n--- {meta.get('topic','')}  [{f.name}]")
@@ -165,20 +175,18 @@ def main():
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    ids = {}
+    seen_name, idx = {}, ['# 知识库索引\n', '| 文件 | 类型 | 主题 |', '|---|---|---|']
     for f, meta, body in entries:
-        g = generalize(body, relabel)
-        # 匿名 ID：本次导出的随机盐，不复用工作版文件名里的哈希
-        i = len(ids)
-        fid = f'{seed % 100000:05d}-{i:04d}'
-        ids[f.name] = fid
+        is_client = meta.get('type') == '筹划案' and f.name.startswith('客户案-')
+        g = generalize(body, relabel, aggressive=is_client)
+        # 文件名按主题命名（便于使用；主题本身不含客户信息，不是新增泄漏）
+        base = slug(meta.get('topic', '')) or 'entry'
+        seen_name[base] = seen_name.get(base, 0) + 1
+        fid = f'{base}-{seen_name[base]:02d}'
         head = (f"---\ntitle: {meta.get('topic','资料')}\n"
                 f"type: {meta.get('type','')}\ntopic: {meta.get('topic','')}\n---\n\n")
         (out / f'{fid}.md').write_text(head + g, encoding='utf-8')
-    # 索引（不含任何来源/时间/哈希）
-    idx = ['# 知识库索引\n']
-    for f, meta, body in entries:
-        idx.append(f"- `{ids[f.name]}.md` — [{meta.get('type','')}] {meta.get('topic','')}")
+        idx.append(f"| `{fid}.md` | {meta.get('type','')} | {meta.get('topic','')} |")
     (out / '_index.md').write_text('\n'.join(idx) + '\n', encoding='utf-8')
     print(f"已导出 {len(entries)} 条 -> {out}")
     print(f"  代号重编: {len(relabel)} 个 -> 实体A…; seed={seed}（不随库交付）")
