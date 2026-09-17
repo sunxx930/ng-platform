@@ -22,6 +22,7 @@ RULES = [
     (re.compile(r'毕马威|KPMG'), '[事务所]'),
     (re.compile(r'Ernst\s*&\s*Young', re.I), '[事务所]'),
     (re.compile(r'Wolters\s*Kluwer|威科先行'), '[数据库]'),
+    (re.compile(r'[（(]?中国[)）]?企业咨询有限公司|企业咨询[（(]中国[)）]有限公司|毕威企业咨[询]?[（(]中国[)）][有]?公司'), '[事务所]'),
 ]
 
 # ---------- 客户案脱敏（--client-case） ----------
