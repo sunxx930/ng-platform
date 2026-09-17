@@ -149,7 +149,9 @@ def mask_all(text: str, m: dict) -> str:
     for group in (ascii_pairs, cjk_pairs):          # 先英文后中文：中文换代号后紧跟的英文会被词边界挡住
         for v, code in sorted(group, key=lambda x: len(x[0]), reverse=True):
             if re.fullmatch(r"[A-Za-z0-9&.'\- ]+", v):
-                text = re.sub(r'(?<![A-Za-z])' + re.escape(v) + r'(?![A-Za-z])', code, text)
+                # 空白容错：OCR 常把 "Meiya Shanghai" 排成 "Meiya  Shanghai"
+                body = r'\s+'.join(re.escape(w) for w in v.split())
+                text = re.sub(r'(?<![A-Za-z])' + body + r'(?![A-Za-z])', code, text)
             else:
                 text = text.replace(v, code)
     return text
