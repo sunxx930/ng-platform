@@ -5,6 +5,7 @@
 说明: 仅本地；原文件不动、不删除。图片/图表文字不在文本抽取范围内（需 OCR，二期）。
 """
 import os, re, sys, hashlib, datetime
+from collections import Counter
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.services.materials import extract_text
@@ -267,9 +268,31 @@ _BOILER = [
 ]
 
 
+# 「只保留知识」：页码行、状态标签行——纯噪声，直接删
+_NOISE_LINE = re.compile(
+    r'^[ \t]*(?:\d{1,3}|初稿|终稿|讨论稿|定稿|草稿|DRAFT|Draft|FINAL|Final|'
+    r'目录|引言|序号|附注|注释|谢谢|感谢聆听)[ \t]*$', re.M)
+
+
+def _drop_repeated_lines(t: str, min_times: int = 5, max_len: int = 80) -> str:
+    """页眉/页脚特征：同一行在一份文档里出现很多次。整行删掉。
+
+    只对「短行」生效（长段落重复多半是正文里的表格/条款，不动）。
+    """
+    lines = t.splitlines()
+    cnt = Counter(l.strip() for l in lines if l.strip())
+    rep = {l for l, n in cnt.items() if n >= min_times and len(l) <= max_len}
+    if not rep:
+        return t
+    return '\n'.join('' if l.strip() in rep else l for l in lines)
+
+
 def strip_boilerplate(t: str) -> str:
     for rx in _BOILER:
         t = rx.sub('', t)
+    t = _NOISE_LINE.sub('', t)                    # 页码 / 状态标签 等纯噪行
+    t = _drop_repeated_lines(t)                   # 反复出现的页眉/页脚
+    t = re.sub(r'\n{3,}', '\n\n', t)             # 收拢空行
     return re.sub(r'[ \t]{2,}', ' ', t)
 
 
