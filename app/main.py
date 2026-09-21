@@ -1574,3 +1574,19 @@ if (_DIST.exists() and (_DIST / "index.html").exists()) or os.environ.get("NG_HO
     async def spa():
         p = _ui_file("index.html")
         return FileResponse(p) if p else JSONResponse(status_code=404, content={"detail": "no ui"})
+
+    @app.get("/{rest:path}", include_in_schema=False)
+    async def ui_spa(rest: str):
+        """根目录静态文件兜底：/logo-trim.png、/favicon.png 等。
+
+        此前只挂了 /assets/* 和 /，这两个文件不在 assets/ 下 → 直接 404，登录页 logo 裂图。
+        带扩展名的资源找不到就如实 404（不能用 index.html 冒充图片，否则 img 静默失败）；
+        其余路径交给 SPA 前端路由。
+        """
+        p = _ui_file(rest)
+        if p:
+            return FileResponse(p)
+        if "." in rest.rsplit("/", 1)[-1]:
+            return JSONResponse(status_code=404, content={"detail": "not found"})
+        idx = _ui_file("index.html")
+        return FileResponse(idx) if idx else JSONResponse(status_code=404, content={"detail": "no ui"})
