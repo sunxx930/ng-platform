@@ -35,6 +35,9 @@ def _work_dir() -> Path:
         probe = base / ".write_test"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink()
+        # 成功路径也必须导出 NG_HOME —— main.py 靠这个变量判定内容热更目录（NG_HOME/ui）。
+        # 此前只在失败回退里设置，导致正常运行时 NG_HOME 为空、热更目录永远不被读取。
+        os.environ.setdefault("NG_HOME", str(base))
         return base
     except Exception as e:      # noqa: BLE001
         import tempfile
