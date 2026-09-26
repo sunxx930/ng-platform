@@ -103,20 +103,49 @@ def update_status(auth: dict = Depends(require_auth)):
             ui_version = _j.loads(vf.read_text(encoding="utf-8")).get("version")
         except Exception:      # noqa: BLE001
             ui_version = None
-    return {"enabled": True, "ui_version": ui_version, "bundle_version": VERSION}
+    kf = Path(ng_home) / "knowledge" / "version.json"
+    kb_version = None
+    if kf.is_file():
+        try:
+            import json as _j
+            kb_version = _j.loads(kf.read_text(encoding="utf-8")).get("version")
+        except Exception:      # noqa: BLE001
+            kb_version = None
+    return {"enabled": True, "ui_version": ui_version, "knowledge_version": kb_version,
+            "bundle_version": VERSION}
 
 
 @app.post("/update/apply")
-def update_apply(auth: dict = Depends(require_auth)):
-    """拉内容升级包并原子落到 NG_HOME/ui（只动前端资产，不碰项目/数据）。"""
+def update_apply(pack: int = 0, auth: dict = Depends(require_auth)):
+    """拉内容升级包并原子落到 NG_HOME/ui（只动前端资产，不碰项目/数据）。
+
+    pack=1 时**同时**拉知识包（体积大，默认不拉，由客户端显式请求）。
+    """
     ng_home = os.environ.get("NG_HOME", "").strip()
     if not ng_home:
         raise HTTPException(400, "当前无 NG_HOME，未启用内容热更")
     from app.services.updater import apply_ui_update
     try:
-        return apply_ui_update(Path(ng_home) / "ui")
+        out = {"ui": apply_ui_update(Path(ng_home) / "ui")}
     except Exception as ex:      # noqa: BLE001
         raise HTTPException(400, f"内容升级失败: {ex}")
+    if pack:
+        from app.services.updater import apply_knowledge_pack
+        try:
+            out["knowledge"] = apply_knowledge_pack(Path(ng_home) / "knowledge")
+        except Exception as ex:  # noqa: BLE001
+            out["knowledge"] = {"applied": False, "reason": f"{ex}"}
+    return out
+
+
+@app.post("/update/knowledge")
+def update_knowledge(auth: dict = Depends(require_auth)):
+    """单独拉知识包（法规/案例库）。已是最新则直接返回，不重复下载。"""
+    ng_home = os.environ.get("NG_HOME", "").strip()
+    if not ng_home:
+        raise HTTPException(400, "当前无 NG_HOME，未启用内容热更")
+    from app.services.updater import apply_knowledge_pack
+    return apply_knowledge_pack(Path(ng_home) / "knowledge")
 
 
 @app.get("/auth/me")

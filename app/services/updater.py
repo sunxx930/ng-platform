@@ -1,7 +1,7 @@
-"""内容热更（升级模式 A，v1.2.1）：只备"UI/内容升级包"，客户端自动拉取替换。
+"""内容热更（升级模式 A）：UI 资产 + 知识包，客户端自动拉取替换。
 
 安全边界（保证客户项目不受影响）：
-- 只写 NG_HOME/ui（前端资产），**绝不碰** data/events/artifacts → 项目/任务零影响
+- UI 包只写 NG_HOME/ui；知识包只写 NG_HOME/knowledge → **绝不碰** data/events/artifacts
 - 只允许白名单扩展名 & 无目录穿越；下载→sha256 校验→原子 rename 覆盖
 - manifest 默认 https://ng-platform.ai/update.json（可 env NG_UPDATE_MANIFEST 覆盖/测试）
 """
@@ -21,6 +21,74 @@ _MAX_TOTAL_MB = 80
 
 def manifest_url() -> str:
     return os.environ.get("NG_UPDATE_MANIFEST", "https://ng-platform.ai/update.json")
+
+
+def _manifest() -> dict:
+    data = urllib.request.urlopen(manifest_url(), timeout=10).read()
+    return json.loads(data.decode("utf-8"))
+
+
+def _download(url: str, dest: Path, *, resume: bool = False, timeout: int = 60,
+              chunk: int = 1 << 20) -> None:
+    """下载到 dest。resume=True 时用 Range 头续传已有部分（知识包可能几百 MB）。"""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    have = dest.stat().st_size if (resume and dest.exists()) else 0
+    req = urllib.request.Request(url)
+    if have:
+        req.add_header("Range", f"bytes={have}-")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        # 服务器不支持断点续传（返回 200 而非 206）→ 从头来，避免拼出错文件
+        if have and getattr(resp, "status", 200) != 206:
+            have = 0
+        mode = "ab" if have else "wb"
+        with open(dest, mode) as fh:
+            while True:
+                buf = resp.read(chunk)
+                if not buf:
+                    break
+                fh.write(buf)
+
+
+def apply_knowledge_pack(knowledge_dir: Path, *, keep_encrypted: bool = True) -> dict:
+    """拉「知识包」并按需落地到 knowledge_dir。
+
+    与 UI 热更的区别：
+    - 单个大文件（加密归档），不是逐文件 → 扩展名白名单不适用，改为整包 sha256 校验
+    - 体积大 → 支持断点续传（下载到 .part，续传，校验通过才原子改名）
+    - 解密不在这里做：本函数只保证「正确、完整地把包放到该在的位置」
+
+    manifest 里对应字段：
+        "knowledge": {"version": "2026-09", "url": "...", "sha256": "...", "size": 123}
+    返回 {applied, version, reason}。
+    """
+    knowledge_dir = Path(knowledge_dir)
+    knowledge_dir.mkdir(parents=True, exist_ok=True)
+    m = _manifest()
+    pack = m.get("knowledge") or {}
+    url = str(pack.get("url", "") or "")
+    version = str(pack.get("version", "") or "")
+    want = str(pack.get("sha256", "") or "").lower()
+    if not url:
+        return {"applied": False, "version": version, "reason": "manifest 无知识包"}
+
+    cur = knowledge_dir / "version.json"
+    if cur.exists() and version:
+        try:
+            if json.loads(cur.read_text(encoding="utf-8")).get("version") == version:
+                return {"applied": False, "version": version, "reason": "已是最新"}
+        except Exception:  # noqa: BLE001
+            pass
+
+    part = knowledge_dir / "kb.pack.part"
+    try:
+        _download(url, part, resume=True)
+        if want and hashlib.sha256(part.read_bytes()).hexdigest() != want:
+            return {"applied": False, "version": version, "reason": "sha256 校验失败（已保留 .part 供续传）"}
+        os.replace(part, knowledge_dir / ("kb.pack.enc" if keep_encrypted else "kb.pack"))
+        cur.write_text(json.dumps({"version": version}, ensure_ascii=False), encoding="utf-8")
+        return {"applied": True, "version": version, "reason": "ok"}
+    except Exception as e:  # noqa: BLE001
+        return {"applied": False, "version": version, "reason": f"下载失败: {e}"}
 
 
 def apply_ui_update(ui_dir: Path) -> dict:
