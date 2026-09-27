@@ -170,33 +170,42 @@ def update_knowledge(auth: dict = Depends(require_auth)):
 
 @app.get("/tax/status")
 def tax_status():
-    """税务版状态：安装包是否内嵌知识包 / 本机是否已启用 / 授权状态。
+    """税务版状态：已装补丁 / 已备未装补丁 / 授权状态。
 
-    无服务器分发形态（方案B）：知识包随安装包下发，首次启动由客户端询问是否启用。
+    分发形态（用户 2026-09-27 定）：案例库、法规库各为**独立补丁**，
+    与安装包并列挂在官网（GitHub Release 资产），客户端按需下载。
     """
     from app.services.license import status as _lic
-    from app.services.updater import bundled_pack_path
+    from app.services.updater import patch_files
     ng_home = os.environ.get("NG_HOME", "").strip()
-    installed = False
-    if ng_home:
-        installed = (Path(ng_home) / "knowledge" / "index" / "vec.npy").is_file()
-    bp = bundled_pack_path()
-    return {"bundled_available": bool(bp),
-            "installed": installed,
-            "license": _lic()}
+    kb = Path(ng_home) / "knowledge" if ng_home else None
+    content = sorted(p.stem for p in (kb / "content").glob("*.enc")) if kb and (kb / "content").is_dir() else []
+    saved = [p.name for p in patch_files(kb)] if kb else []
+    return {"content": content, "saved_patches": saved,
+            "installed": bool(content), "license": _lic()}
 
 
 @app.post("/tax/enable")
 def tax_enable(auth: dict = Depends(require_auth)):
-    """启用税务版：展开**随安装包内嵌**的加密知识包（不联网）。
+    """启用税务版：从官网 manifest 拉取补丁并安装（带断点续传 + sha256 校验）。
 
-    没有授权时只落密文，待激活后解开；授权状态见 /license/status。
+    没有授权/试用密钥时补丁会先存到 patches/，激活后再装（见 /tax/install-saved）。
     """
     ng_home = os.environ.get("NG_HOME", "").strip()
     if not ng_home:
         raise HTTPException(400, "当前无 NG_HOME，未启用内容热更")
-    from app.services.updater import install_bundled_pack
-    return install_bundled_pack(Path(ng_home) / "knowledge")
+    from app.services.updater import apply_knowledge_pack
+    return apply_knowledge_pack(Path(ng_home) / "knowledge")
+
+
+@app.post("/tax/install-saved")
+def tax_install_saved(auth: dict = Depends(require_auth)):
+    """把之前存下的补丁（未授权时先落盘的）装上——激活授权后调用。"""
+    ng_home = os.environ.get("NG_HOME", "").strip()
+    if not ng_home:
+        raise HTTPException(400, "当前无 NG_HOME")
+    from app.services.updater import install_saved_patches
+    return install_saved_patches(Path(ng_home) / "knowledge")
 
 
 @app.get("/auth/me")

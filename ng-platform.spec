@@ -25,12 +25,9 @@ ROOT = Path(SPECPATH)
 # 资源根（相对 __file__ 解析）：入口在 _MEIPASS 下，templates.json 等在 app/agents/
 # 打包时按项目原结构打进去，运行时代码用 Path(__file__).parent 解析到 _MEIPASS 内。
 
-# 税务「小包」（加密，方案B：随安装包下发；无服务器）
-#   mac  → 内嵌进 .app（拖进「应用程序」时包要跟着走），放 _MEIPASS 根，运行时按名找得到
-#   win  → **不内嵌**：onefile 会把 datas 每次启动都解压到临时目录，30MB 白等；
-#          改为随 exe 并排放进 zip，运行时从 exe 同级目录取（见 updater.bundled_pack_path）
-# 试用密钥（方案A）体积小，两端都内嵌——win 不必再往 zip 里塞第二个文件。
-_BUNDLED_PACK = ROOT / "data" / "kb.pack.enc"
+# 税务知识库走**独立补丁**（案例库/法规库各一个，与安装包并列挂官网），
+# 安装包里**不再内嵌内容包**——加法规只需发新补丁，安装包不动。
+# 但**试用密钥要内嵌**（体积 32 字节）：没有它，未激活的客户解不开补丁。
 _TAX_KEY = ROOT / "data" / "trial_pack.key"
 _ALLOW_NO_TAX = os.environ.get("NG_ALLOW_NO_TAX_PACK") == "1"
 
@@ -53,16 +50,6 @@ if not _TAX_KEY.is_file() and not _ALLOW_NO_TAX:
     )
 if _TAX_KEY.is_file():
     _datas.append((str(_TAX_KEY), "."))
-
-if not IS_WIN:
-    if not _BUNDLED_PACK.is_file() and not _ALLOW_NO_TAX:
-        raise SystemExit(
-            "[spec] ✗ 缺少 data/kb.pack.enc（税务小包，mac 要内嵌进 .app）。\n"
-            "       生成：python3 scripts/build_kbpack.py --version <ver> --src <交付版库> --out data\n"
-            "       确要打不含税务版的包：NG_ALLOW_NO_TAX_PACK=1 pyinstaller ..."
-        )
-    if _BUNDLED_PACK.is_file():
-        _datas.append((str(_BUNDLED_PACK), "."))
 
 
 a = Analysis(

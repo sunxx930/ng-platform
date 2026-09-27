@@ -70,35 +70,31 @@ def _ask_yes_no(title: str, text: str) -> bool:
 
 
 def _maybe_enable_tax(wd: Path) -> None:
-    """方案B：安装包里带了税务小包 → 首次启动问一句要不要启用。
+    """首次启动问一句要不要启用税务版（案例库补丁）。
 
+    补丁与安装包并列挂在官网，点「要」就地下载安装（带断点续传 + sha256 校验）。
     只问一次（无论答什么都记 .tax_prompted），之后可由界面里的入口再启用。
-    答「启用」→ 就地展开加密包（无需联网）；试用期不在此起算，从**法规库启用**才起算。
+    试用期不在此起算——从**法规库启用**才起算（见 updater._install_blob）。
     """
     try:
-        from app.services.updater import bundled_pack_path, install_bundled_pack
+        from app.services.kb_semantic import content_packs
+        from app.services.updater import apply_knowledge_pack
     except Exception as e:      # noqa: BLE001
         print(f"[desktop] 税务版模块不可用: {e}", flush=True)
         return
 
     kb = wd / "knowledge"
-    if (kb / "index" / "vec.npy").is_file():
-        return                                   # 已启用
+    if content_packs():
+        return                                   # 已有内容补丁
     flag = kb / ".tax_prompted"
     if flag.exists():
         return                                   # 问过了，不重复打扰
-    try:
-        src = bundled_pack_path()
-    except Exception:      # noqa: BLE001
-        return
-    if not src:
-        return                                   # 本包不带税务库
 
     ok = _ask_yes_no(
         "NG AI Platform 税务版",
-        "这个安装包里带了「税务知识库」（案例库 + 语义检索）。\n\n"
-        "要现在启用吗？启用后可在联机助手中检索税务案例。\n"
-        "试用 30 天；试用期从**法规库启用**时才开始计算。",
+        "要启用「税务知识库」吗？\n\n"
+        "启用后可在助手里检索税务案例（案例库 + 语义检索，离线可用）。\n"
+        "需要联网下载一次（约 300MB，支持断点续传）。",
     )
     try:
         kb.mkdir(parents=True, exist_ok=True)
@@ -109,7 +105,7 @@ def _maybe_enable_tax(wd: Path) -> None:
         print("[desktop] 用户暂未启用税务版（可稍后在界面里启用）", flush=True)
         return
 
-    res = install_bundled_pack(kb)
+    res = apply_knowledge_pack(kb)
     print(f"[desktop] 税务版启用: {res}", flush=True)
     if res.get("applied"):
         _ask_yes_no("NG AI Platform 税务版",

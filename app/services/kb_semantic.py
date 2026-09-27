@@ -1,16 +1,17 @@
 """语义检索（本地小模型，零外部服务）。
 
-随「小包」（方案B：无服务器 → 知识包内嵌进安装包）下发的内容：
-    NG_HOME/knowledge/models/embed/    bge-small-zh-v1.5 (ONNX int8, 23MB)  ← 必需
-    NG_HOME/knowledge/index/           vec.npy + meta.jsonl                 ← 必需
-    NG_HOME/knowledge/models/rerank/   bge-reranker-base  (ONNX int8, 283MB) ← 可选
+盘上布局（**内容永不落明文**，见 9/20 定案）：
+    NG_HOME/knowledge/content/<补丁>.enc   tax-cases + index 打包加密 ← 只在内存解
+    NG_HOME/knowledge/models/embed/        bge-small-zh-v1.5 (ONNX, 23MB)   ← 公开模型，落盘
+    NG_HOME/knowledge/models/rerank/       bge-reranker-base  (ONNX, 283MB) ← 公开模型，落盘
+
+补丁（案例库/法规库）各自独立，检索时**在内存解密**并合并打分；
+客户机器上不出现 tax-cases/*.md、index/meta.jsonl 这类明文正文。
 
 两阶段：纯语义召回 top-K →（有重排模型时）cross-encoder 精排 top-N。
 实测（3820 块 / 163 份）：带重排三查询全部进 top-2，单次约 1 秒。
-**重排是可选增强**：小包不带 283MB 重排模型，此时退化为纯语义召回。
-不建议长期缺重排——实测纯语义会被"表面相似"骗（讲境外派遣的会压过正确答案）。
 
-模型不存在或依赖缺失时，调用方应回退到 kb.py 的关键词检索（见 kb.search）。
+模型或补丁缺失时，调用方应回退到 kb.py 的关键词检索（见 kb.search）。
 """
 from __future__ import annotations
 
@@ -34,8 +35,18 @@ def models_dir() -> Path:
     return kb_dir() / "models"
 
 
-def index_dir() -> Path:
-    return kb_dir() / "index"
+def content_dir() -> Path:
+    """内容密文目录：每个补丁一个 *.enc（tax-cases + index 打包加密）。
+
+    **这是刻意的**：交付版内容永不落明文盘（定案 9/20）。
+    盘上只有密文，检索时在内存解密。
+    """
+    return kb_dir() / "content"
+
+
+def content_packs() -> list[Path]:
+    d = content_dir()
+    return sorted(d.glob("*.enc")) if d.is_dir() else []
 
 
 def _has_model(kind: str) -> bool:
@@ -44,20 +55,18 @@ def _has_model(kind: str) -> bool:
 
 
 def rerank_available() -> bool:
-    """重排模型在不在（283MB，小包不带 → 可选增强）。"""
+    """重排模型在不在（可选增强；缺它退化为纯语义召回）。"""
     return _has_model("rerank")
 
 
 def available() -> bool:
-    """语义检索是否可用。**只要求 embed + 索引 + 运行时**——重排是可选增强，
-    缺它照样能纯语义召回（见 rerank_available）。"""
+    """语义检索是否可用：embed 模型 + 至少一个内容补丁 + 运行时。"""
     try:
         import onnxruntime  # noqa: F401
         from tokenizers import Tokenizer  # noqa: F401
     except Exception:      # noqa: BLE001
         return False
-    return (_has_model("embed")
-            and (index_dir() / "vec.npy").is_file())
+    return _has_model("embed") and bool(content_packs())
 
 
 def _load(kind: str):
@@ -113,13 +122,51 @@ def rerank(query: str, docs: list[str]) -> list[float]:
     return [float(x) for x in out.reshape(-1)]
 
 
+# 内容索引的内存缓存（每个补丁解一次，进程内复用）
+_index_cache: tuple | None = None
+
+
+def reset_index_cache() -> None:
+    """装了/卸了新补丁后调用，让下次检索重新解密建索引。"""
+    global _index_cache
+    _index_cache = None
+
+
 def load_index():
-    """返回 (向量矩阵, 元信息列表)。"""
-    import numpy as np
-    d = index_dir()
-    V = np.load(d / "vec.npy")
-    meta = [json.loads(l) for l in (d / "meta.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
-    return V, meta
+    """返回 (向量矩阵, 元信息列表)——**在内存解密**，不落明文盘。
+
+    每个补丁（案例/法规）各是一个密文 zip，内含 index/vec.npy + index/meta.jsonl。
+    多个补丁的向量按行拼接，检索时一起算分。
+    """
+    global _index_cache
+    if _index_cache is not None:
+        return _index_cache
+
+    import io as _io
+    import zipfile as _zip
+    import numpy as _np
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from app.services.license import pack_key
+
+    packs = content_packs()
+    if not packs:
+        raise RuntimeError("没有内容补丁（content/*.enc）")
+    key = pack_key()
+    if not key:
+        raise RuntimeError("无授权/试用密钥，无法解开内容补丁")
+
+    Vs, metas = [], []
+    for p in packs:
+        blob = p.read_bytes()
+        plain = AESGCM(key).decrypt(blob[:12], blob[12:], None)
+        with _zip.ZipFile(_io.BytesIO(plain)) as zf:
+            V = _np.load(_io.BytesIO(zf.read("index/vec.npy")))
+            metas += [json.loads(l) for l in
+                      zf.read("index/meta.jsonl").decode("utf-8").splitlines() if l.strip()]
+        Vs.append(V)
+    M = _np.vstack(Vs).astype(_np.float32) if len(Vs) > 1 else Vs[0].astype(_np.float32)
+    _index_cache = (M, metas)
+    return _index_cache
 
 
 def search(query: str, topn: int = 3, recall: int = 20) -> list[dict]:

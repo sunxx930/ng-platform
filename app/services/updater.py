@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import urllib.request
@@ -50,128 +51,136 @@ def _download(url: str, dest: Path, *, resume: bool = False, timeout: int = 60,
                 fh.write(buf)
 
 
-# 随安装包内嵌的加密知识包（方案B：无服务器时靠它把税务库带下去）
-_BUNDLED_NAMES = ("kb.pack.enc",)
+def patch_files(knowledge_dir: Path) -> list[Path]:
+    """已下载/已保存的补丁原件（客户从官网下的 *.enc）。"""
+    d = Path(knowledge_dir) / "patches"
+    return sorted(d.glob("*.enc")) if d.is_dir() else []
 
 
-def bundled_pack_path() -> Path | None:
-    """找随包内嵌的加密知识包。找不到返回 None。
+# 补丁 zip 里的顶层目录：内容（受保护，永不落明文）与模型（公开，落盘）
+_CONTENT_DIRS = ("tax-cases", "index", "tax-regs")
 
-    搜索顺序（覆盖两种分发形态）：
-    1. NG_BUNDLED_PACK 环境变量（测试/调试用）
-    2. sys._MEIPASS —— PyInstaller 解包目录（mac 的 .app 内嵌走这条）
-    3. exe/app 同级目录 —— Windows 的 zip 里 exe 与包并排放（避免 onefile
-       每次启动都解 30MB 到临时目录）
-    4. 项目根 data/ —— 本地开发
-    """
-    cands: list[Path] = []
-    env = os.environ.get("NG_BUNDLED_PACK", "").strip()
-    if env:
-        cands.append(Path(env))
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass:
-        cands += [Path(meipass) / n for n in _BUNDLED_NAMES]
-    exe = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else None
-    if exe:
-        cands += [exe / n for n in _BUNDLED_NAMES]
-    cands += [Path(__file__).resolve().parent.parent.parent / "data" / n for n in _BUNDLED_NAMES]
-    for p in cands:
-        if p.is_file():
-            return p
-    return None
+
+def _safe_name(s: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", s)[:64] or "pack"
 
 
 def _install_blob(blob: bytes, knowledge_dir: Path, version: str) -> dict:
-    """把（已校验的）加密包解密并就地展开到 knowledge_dir。
+    """装补丁：内存解密 → 模型落盘（公开）→ 内容**重新加密**成 content/*.enc。
 
-    解密需要授权里的包密钥；没有授权则只落密文，等激活后再解。
-    解压到临时目录再原子搬入，避免半截状态。
+    ⚠️ 关键：**tax-cases / index / tax-regs 一律不写明文盘**（9/20 定案：内容不可提取）。
+    盘上只留 content/<补丁>.enc，检索时在内存解密（见 kb_semantic.load_index）。
+
+    没有授权/试用密钥时不能解 → 补丁原件存到 patches/ 等激活后再装。
     """
     import io as _io
     import os as _os
-    import re as _re
-    import shutil as _sh
     import zipfile as _zip
 
-    enc_path = knowledge_dir / "kb.pack.enc"
-    enc_path.write_bytes(blob)
+    knowledge_dir = Path(knowledge_dir)
+    patches_dir = knowledge_dir / "patches"
+    patches_dir.mkdir(parents=True, exist_ok=True)
+    patch_path = patches_dir / f"{_safe_name(version)}.enc"
+    patch_path.write_bytes(blob)
 
-    from app.services.license import pack_key
+    from app.services.license import pack_key, note_use
     key = pack_key()
     if not key:
-        return {"applied": True, "version": version, "reason": "已下载，待激活授权后解密"}
+        return {"applied": False, "version": version,
+                "reason": "已保存补丁，待激活授权后解密", "patch": str(patch_path)}
+
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     plain = AESGCM(key).decrypt(blob[:12], blob[12:], None)
-    tmp = Path(tempfile.mkdtemp(prefix=".kb-", dir=str(knowledge_dir)))
+
+    models_dir = knowledge_dir / "models"
+    content_dir = knowledge_dir / "content"
+    content_dir.mkdir(parents=True, exist_ok=True)
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    n_models = n_content = 0
     with _zip.ZipFile(_io.BytesIO(plain)) as zf:
-        for name in zf.namelist():
+        names = zf.namelist()
+        # 1) 模型 → 落盘（公开模型，ONNX 需要文件路径）
+        for name in names:
             rel = name.replace("\\", "/").lstrip("/")
-            if not rel or ".." in rel.split("/") or ":" in rel:
+            if not rel.startswith("models/") or name.endswith("/"):
                 continue
-            dst = (tmp / rel).resolve()
-            try:
-                dst.relative_to(tmp.resolve())
-            except ValueError:
+            if ".." in rel.split("/") or ":" in rel:
                 continue
-            if name.endswith("/"):
-                dst.mkdir(parents=True, exist_ok=True)
-                continue
+            dst = models_dir / rel[len("models/"):]
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(zf.read(name))
-    for sub in ("tax-cases", "index", "models", "tax-regs"):
-        src = tmp / sub
-        if not src.is_dir():
-            continue
-        tgt = knowledge_dir / sub
-        old = knowledge_dir / (sub + ".old")
-        if tgt.exists():
-            _os.replace(tgt, old)
-        _os.replace(src, tgt)
-        _sh.rmtree(old, ignore_errors=True)
+            n_models += 1
+        # 2) 内容 → 重新打包再加密成 content/<补丁>.enc（**不落明文**）
+        buf = _io.BytesIO()
+        with _zip.ZipFile(buf, "w", _zip.ZIP_DEFLATED, compresslevel=6) as cz:
+            for name in names:
+                rel = name.replace("\\", "/").lstrip("/")
+                if not rel.startswith(_CONTENT_DIRS) or name.endswith("/"):
+                    continue
+                if ".." in rel.split("/") or ":" in rel:
+                    continue
+                cz.writestr(rel, zf.read(name))
+                n_content += 1
+        nonce = _os.urandom(12)
+        enc = AESGCM(key).encrypt(nonce, buf.getvalue(), None)
+        (content_dir / f"{_safe_name(version)}.enc").write_bytes(nonce + enc)
+
+    regs_installed = any(n.replace("\\", "/").startswith("tax-regs/") for n in names)
     # 试用期起算（用户 2026-09-27 定，甲）：**法规库启用**这一刻才起算。
-    # 法规库 = 第二批法条，落在 tax-regs/（案例包不含该目录 → 装案例不烧试用期）。
-    regs_installed = (knowledge_dir / "tax-regs").is_dir()
+    # 案例补丁不含 tax-regs/ → 装案例不烧试用期。
     if regs_installed:
         try:
-            from app.services.license import note_use
             note_use()
         except Exception:      # noqa: BLE001
             pass
-    _sh.rmtree(tmp, ignore_errors=True)
-    (knowledge_dir / "kb.pack.part").unlink(missing_ok=True)
+
+    # 原始补丁是「模型 + 内容」的大包；模型已落盘、内容已转成小密文，原件留着白占 ~250M。
+    # 需要重装时从官网重下即可（有 sha256 校验）。
+    try:
+        patch_path.unlink(missing_ok=True)
+    except Exception:      # noqa: BLE001
+        pass
+
     (knowledge_dir / "version.json").write_text(
-        json.dumps({"version": version}, ensure_ascii=False), encoding="utf-8")
+        json.dumps({"version": version, "regs": regs_installed}, ensure_ascii=False),
+        encoding="utf-8")
+    # 内容变了 → 让检索重建内存索引
+    try:
+        from app.services import kb_semantic as _kb
+        _kb.reset_index_cache()
+    except Exception:      # noqa: BLE001
+        pass
     return {"applied": True, "version": version, "reason": "ok",
-            "regs": regs_installed}
+            "regs": regs_installed, "models": n_models, "content": n_content}
 
 
-def install_bundled_pack(knowledge_dir: Path) -> dict:
-    """启用税务版：把**随安装包内嵌**的加密知识包展开到 knowledge_dir。
+def install_patch_file(src: Path, knowledge_dir: Path) -> dict:
+    """装一个**本地补丁文件**（客户从官网下载的 *.enc，案例库/法规库各一个）。
 
-    与 apply_knowledge_pack 的区别：不联网下载，包就在安装包里（无服务器的分发形态）。
-    没有授权（pack_key 为 None）时只落密文，等激活后再解。
+    内容永不落明文盘；模型落盘（公开）。没有授权/试用密钥时先存着，激活后再装。
     """
     knowledge_dir = Path(knowledge_dir)
     knowledge_dir.mkdir(parents=True, exist_ok=True)
-    src = bundled_pack_path()
-    if not src:
-        return {"applied": False, "reason": "安装包里没有找到知识包", "source": None}
-
-    cur = knowledge_dir / "version.json"
-    version = "bundled"
-    if cur.exists():
-        try:
-            version = json.loads(cur.read_text(encoding="utf-8")).get("version") or version
-        except Exception:      # noqa: BLE001
-            pass
-
+    src = Path(src)
+    if not src.is_file():
+        return {"applied": False, "reason": f"补丁文件不存在: {src}"}
+    version = src.stem or "patch"
     try:
-        blob = src.read_bytes()
-        out = _install_blob(blob, knowledge_dir, f"bundled-{version}" if version != "bundled" else "bundled")
-        out["source"] = str(src)
-        return out
+        return _install_blob(src.read_bytes(), knowledge_dir, version)
     except Exception as e:      # noqa: BLE001
-        return {"applied": False, "reason": f"失败: {e}", "source": str(src)}
+        return {"applied": False, "version": version, "reason": f"失败: {e}"}
+
+
+def install_saved_patches(knowledge_dir: Path) -> dict:
+    """把 patches/ 下已保存的补丁全部装一遍（激活授权后把之前存下的补丁解出来）。"""
+    knowledge_dir = Path(knowledge_dir)
+    out = []
+    for p in patch_files(knowledge_dir):
+        out.append({"patch": p.name, **install_patch_file(p, knowledge_dir)})
+    if not out:
+        return {"applied": False, "reason": "没有待安装的补丁", "installed": []}
+    return {"applied": any(x.get("applied") for x in out), "installed": out}
 
 
 def apply_knowledge_pack(knowledge_dir: Path, *, keep_encrypted: bool = True) -> dict:
