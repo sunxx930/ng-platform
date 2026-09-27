@@ -105,14 +105,23 @@ def _maybe_enable_tax(wd: Path) -> None:
         print("[desktop] 用户暂未启用税务版（可稍后在界面里启用）", flush=True)
         return
 
-    res = apply_knowledge_pack(kb)
-    print(f"[desktop] 税务版启用: {res}", flush=True)
-    if res.get("applied"):
-        _ask_yes_no("NG AI Platform 税务版",
-                    "税务知识库已启用 ✓\n\n打开界面即可在助手里检索税务案例。")
-    else:
-        _ask_yes_no("NG AI Platform 税务版",
-                    f"启用没成功：{res.get('reason')}\n\n可稍后在界面里重试。")
+    # 补丁约 300MB，**放后台线程下**——否则界面要等下载完才打开（首次体验很差）。
+    def _worker() -> None:
+        try:
+            res = apply_knowledge_pack(kb)
+        except Exception as e:      # noqa: BLE001
+            res = {"applied": False, "reason": str(e)}
+        print(f"[desktop] 税务版启用: {res}", flush=True)
+        if res.get("applied"):
+            _ask_yes_no("NG AI Platform 税务版",
+                        "税务知识库已启用 ✓\n\n现在就能在助手里检索税务案例了。")
+        else:
+            _ask_yes_no("NG AI Platform 税务版",
+                        f"下载/启用没成功：{res.get('reason')}\n\n"
+                        "可稍后在界面里重试。")
+
+    threading.Thread(target=_worker, daemon=True).start()
+    print("[desktop] 税务知识库后台下载中，界面照常可用…", flush=True)
 
 
 def main():
