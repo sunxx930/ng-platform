@@ -1,7 +1,7 @@
 """产品免注册测试入口（2026-09-02，Task 38 收尾）：demo token 鉴权。
 
-运行（mac/Linux）: cd ~/Desktop/ng-platform && .venv/bin/python -m pytest tests/test_demo.py -q
-运行（Windows）: cd ~/Desktop/ng-platform && .venv\\Scripts\\python -m pytest tests/test_demo.py -q
+运行（mac/Linux）: cd ~/ng-platform && .venv/bin/python -m pytest tests/test_demo.py -q
+运行（Windows）: cd ~/ng-platform && .venv\\Scripts\\python -m pytest tests/test_demo.py -q
 """
 import sys
 from pathlib import Path

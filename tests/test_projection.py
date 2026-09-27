@@ -1,8 +1,8 @@
 """投影物化 + 乐观锁回归（P1-1，2026-09-01）。
 
 DB 模式：事件插入同事务折叠投影读模型；tasks.expected_version 乐观锁。
-运行（mac/Linux）: cd ~/Desktop/ng-platform && .venv/bin/python -m pytest tests/test_projection.py -q
-运行（Windows）: cd ~/Desktop/ng-platform && .venv\Scripts\python -m pytest tests/test_projection.py -q
+运行（mac/Linux）: cd ~/ng-platform && .venv/bin/python -m pytest tests/test_projection.py -q
+运行（Windows）: cd ~/ng-platform && .venv\Scripts\python -m pytest tests/test_projection.py -q
 需要本地 PG（ng_platform 库，含 003 迁移 + 投影表）。
 """
 import sys

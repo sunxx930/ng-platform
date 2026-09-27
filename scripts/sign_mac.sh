@@ -18,7 +18,7 @@
 #
 # 产物: dist/NG-AI-Platform.dmg（已 Developer ID 签名 + 公证 + 钉票据）
 #
-# 为什么用暂存目录：若项目在 iCloud「桌面与文稿」同步的路径下（如 ~/Desktop/ng-platform），
+# 为什么用暂存目录：若项目在 iCloud「桌面与文稿」同步的路径下（如 ~/ng-platform），
 # 文件提供者守护进程会把 com.apple.FinderInfo / com.apple.fileprovider.* 写回 .app 文件夹，
 # codesign 报 "resource fork, Finder information, or similar detritus not allowed"。
 # 解决：复制到同步范围外的暂存目录（默认 ~/.ng-sign-staging）再签名/打 DMG，最后把 DMG 拷回。

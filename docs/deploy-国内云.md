@@ -55,7 +55,7 @@ sudo systemctl enable --now docker caddy
 git clone <你的仓库> ng-platform && cd ng-platform
 
 # 方案 B：scp 上传
-# 本地: scp -r ~/Desktop/ng-platform user@server:/opt/ng-platform
+# 本地: scp -r ~/ng-platform user@server:/opt/ng-platform
 ```
 
 ## 5. 前端构建（后端托管 dist 需要）

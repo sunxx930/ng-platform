@@ -1,7 +1,7 @@
 """任务依赖编排（2026-09-02）：串联/并联自动分类 + AutoStartWorker 依赖门控。
 
-运行（mac/Linux）: cd ~/Desktop/ng-platform && .venv/bin/python -m pytest tests/test_dependency.py -q
-运行（Windows）: cd ~/Desktop/ng-platform && .venv\\Scripts\\python -m pytest tests/test_dependency.py -q
+运行（mac/Linux）: cd ~/ng-platform && .venv/bin/python -m pytest tests/test_dependency.py -q
+运行（Windows）: cd ~/ng-platform && .venv\\Scripts\\python -m pytest tests/test_dependency.py -q
 """
 import sys
 import uuid

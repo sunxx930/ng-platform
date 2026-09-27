@@ -1,6 +1,6 @@
 """v1.1 安全回归（走查 P0-1/P0-2/P0-3 + L1 真人复核）。
 
-运行: cd ~/Desktop/ng-platform && .venv/bin/python -m pytest tests/test_v1_1_security.py -q
+运行: cd ~/ng-platform && .venv/bin/python -m pytest tests/test_v1_1_security.py -q
 """
 import sys
 import uuid

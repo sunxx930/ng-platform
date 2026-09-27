@@ -1,7 +1,7 @@
 """通知回归（P1-2，2026-09-01）：事件派生 + 按项目 owner 隔离。
 
-运行（mac/Linux）: cd ~/Desktop/ng-platform && .venv/bin/python -m pytest tests/test_notifications.py -q
-运行（Windows）: cd ~/Desktop/ng-platform && .venv\\Scripts\\python -m pytest tests/test_notifications.py -q
+运行（mac/Linux）: cd ~/ng-platform && .venv/bin/python -m pytest tests/test_notifications.py -q
+运行（Windows）: cd ~/ng-platform && .venv\\Scripts\\python -m pytest tests/test_notifications.py -q
 """
 import sys
 import uuid
