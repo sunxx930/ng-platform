@@ -69,6 +69,26 @@ def _ask_yes_no(title: str, text: str) -> bool:
     return False
 
 
+def _notify(title: str, text: str) -> None:
+    """单按钮提示框（回退通知用）。拿不到 GUI 就退化为打印。"""
+    try:
+        if sys.platform == "darwin":
+            import json
+            import subprocess
+            subprocess.run(["osascript", "-e",
+                            f'display dialog {json.dumps(text)} with title {json.dumps(title)} '
+                            'buttons {"好"} default button "好"'],
+                           capture_output=True, timeout=300)
+            return
+        if sys.platform == "win32":
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, text, title, 0x40)   # MB_ICONINFORMATION
+            return
+    except Exception:      # noqa: BLE001
+        pass
+    print(f"[desktop] {title}: {text}", flush=True)
+
+
 def _maybe_enable_tax(wd: Path) -> None:
     """首次启动问一句要不要启用税务版（案例库补丁）。
 
@@ -138,8 +158,25 @@ def main():
             os.environ.setdefault("NG_TEMPLATES_PATH", str(cand.parent))
             break
 
+    # 代码补丁：决定这次启动用**哪个版本**的代码（提升待生效版本 / 检测回滚），
+    # 再把载荷根插到 sys.path 最前——它会先于 _MEIPASS 被命中，从而覆盖打包的 app.*。
+    # 必须在 import app.main 之前做（一旦 app 进了 sys.modules，覆盖就失效）。
+    import ng_boot
+    code_root = ng_boot.resolve(bundle)
+    if code_root:
+        sys.path.insert(0, str(code_root))
+        print(f"[desktop] 使用代码载荷: {code_root}", flush=True)
+
     import uvicorn
-    import app.main as M                       # 先导入：拿到共享的 log 与 app
+    try:
+        import app.main as M                   # 先导入：拿到共享的 log 与 app
+    except Exception as e:                     # noqa: BLE001
+        # 载荷在 import 阶段就炸（坏补丁最常见的形态）→ 当场隔离并回退，不等下次启动
+        print(f"[desktop] 载荷 import 失败，回退：{type(e).__name__}: {e}", flush=True)
+        code_root = ng_boot.fallback_after_import_failure(bundle)
+        if code_root:
+            sys.path.insert(0, str(code_root))
+        import app.main as M
     from app.workers.runner import run_forever
     port = int(os.environ.get("NG_PORT", "8001"))
 
@@ -162,6 +199,14 @@ def main():
             break
         except Exception:
             time.sleep(0.5)
+
+    # API 活了 → 钉住这次启动是好的（否则下次启动会把它当"启动失败"回滚）
+    if code_root:
+        ng_boot.confirm()
+    if os.environ.get("NG_BOOT_ROLLED_BACK"):
+        _notify("NG AI Platform",
+                f"上次的更新（{os.environ['NG_BOOT_ROLLED_BACK']}）启动失败，已自动回退到上一个可用版本。\n"
+                "你的项目和资料没有受影响。")
 
     # 首次运行：安装包里带了税务小包 → 先问一句要不要启用（方案B）
     _maybe_enable_tax(wd)

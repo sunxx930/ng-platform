@@ -298,6 +298,7 @@ def apply_ui_update(ui_dir: Path) -> dict:
     applied = failed = 0
     if len(files) > _MAX_FILES:
         raise ValueError(f"升级包文件数超限 > {_MAX_FILES}")
+    total_bytes = 0                       # 总体积上限（此前 _MAX_TOTAL_MB 声明了却没用上）
     for f in files:
         path = str(f.get("path", "") or "").replace("\\", "/")
         url = str(f.get("url", "") or "")
@@ -317,6 +318,9 @@ def apply_ui_update(ui_dir: Path) -> dict:
             failed += 1
             continue
         raw = urllib.request.urlopen(url, timeout=15).read()
+        total_bytes += len(raw)
+        if total_bytes > _MAX_TOTAL_MB * 1024 * 1024:
+            raise ValueError(f"升级包总体积超限 > {_MAX_TOTAL_MB}MB")
         if want and hashlib.sha256(raw).hexdigest() != want:
             failed += 1
             continue

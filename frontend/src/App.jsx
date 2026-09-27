@@ -216,6 +216,7 @@ function App() {
   const authed = !!session?.token
   const [opinions, setOpinions] = useState({})   // v1.1：打回修改意见（复核需填）
   const [ver, setVer] = useState('')             // v1.2(A)：当前版本 + 检查更新
+  const [codeReady, setCodeReady] = useState('')  // v1.3：代码补丁已暂存，等下次启动生效
   const [recheck, setRecheck] = useState({})     // v1.2.1：数值任务自动复算结果(tid→{verdict,note})
   const [materials, setMaterials] = useState([]) // v1.2.1：项目材料库
 
@@ -392,7 +393,12 @@ function App() {
     api('/update/apply', token, { method: 'POST' })
       .then((d) => {
         localStorage.setItem(KEY, today)
-        if (d && d.applied > 0) location.reload()
+        // 响应自 192ea62 起按内容域分组 {"ui":{...},"knowledge":{...},"code":{...}}。
+        // 此前读顶层 d.applied → 恒为 undefined → UI 热更落地了却**从不刷新**（既有 bug）。
+        // 代码补丁（d.code.staged）**只提示、不重启**：桌面版单进程，运行中换代码会打断
+        // 客户正在跑的任务；切换交给下次启动（ng_boot 负责）。
+        if (d?.code?.staged) setCodeReady(d.code.version || '')
+        else if (d?.ui?.applied > 0) location.reload()
       })
       .catch(() => { localStorage.setItem(KEY, today) })   // 无 NG_HOME/离线 → 静默跳过
     // eslint-disable-next-line react-hooks/exhaustive-deps

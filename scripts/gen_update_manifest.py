@@ -41,11 +41,30 @@ def main() -> int:
                 "url": f"{BASE}/{rel}",
                 "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
             })
+    mf = ROOT / "update.json"
+    prev = {}
+    if mf.is_file():
+        try:
+            prev = json.loads(mf.read_text(encoding="utf-8")) or {}
+        except Exception:      # noqa: BLE001
+            prev = {}
     manifest = {"version": VERSION, "date": __import__("time").strftime("%Y-%m-%d"),
                 "files": files}
-    (ROOT / "update.json").write_text(json.dumps(manifest, ensure_ascii=False),
-                                                  encoding="utf-8")
-    print(f"update.json version={VERSION}, files={len(files)} → website/ui")
+    # 保留各「内容域」——它们由各自的上线流程维护，本脚本只管 files/version/date。
+    # 此前只写三个键，会把 knowledge 段整个抹掉（每次都得手工合回去），这里修根。
+    #   knowledge      案例库补丁
+    #   knowledge_regs 法规库补丁（出现即视为"法规库已上线"，触发案例库闸门）
+    #   code           签名后的代码补丁
+    # --code <file> 可把 issue_code_patch.py 产出的 code 段直接灌进来。
+    for k in ("knowledge", "knowledge_regs", "code"):
+        if prev.get(k):
+            manifest[k] = prev[k]
+    if len(sys.argv) > 2 and sys.argv[1] == "--code":
+        manifest["code"] = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+    mf.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    extra = [k for k in ("knowledge", "knowledge_regs", "code") if manifest.get(k)]
+    print(f"update.json version={VERSION}, files={len(files)}"
+          f"{', 保留内容域: ' + ','.join(extra) if extra else ''} → ui/")
     return 0
 
 

@@ -10,38 +10,80 @@
   </head>
   <body>
     <div id="root"></div>
-    <!-- 更新提示条：登录后调本机 /api/update/check，有新版本就在底部常驻提示。
-         自包含、无依赖、失败静默——不碰主流程。走内容热更下发，老客户免重装即可收到。 -->
+    <!-- 更新编排：登录后
+           ① 每天一次 POST /api/update/apply —— 暂存「代码补丁」（下次启动生效）+ 应用界面热更
+           ② GET /api/update/check —— 老外壳需要重装新版安装包时给下载入口
+         自包含、无依赖、失败静默，不碰主流程。走内容热更下发，所以老客户不改一行代码即可收到。
+
+         注：这里同时**修掉了一个既有 bug** —— App.jsx 里读的是 d.applied，但后端返回的是
+         分组结构 {ui:{applied}}，导致 UI 热更落地了页面却从不刷新；此处按正确结构判断。
+         代码补丁刻意**不自动重启**：桌面版单进程，运行中换代码会打断客户正在跑的任务。 -->
     <script>
     (function () {
-      var shown = false, tries = 0
-      function check() {
-        if (shown || tries++ > 120) return              // 登录后最多探 10 分钟
-        var s
-        try { s = JSON.parse(localStorage.getItem('ng_session') || 'null') } catch (e) { return }
-        if (!s || !s.token) return                      // 还没登录，下轮再探
-        fetch('/api/update/check', { headers: { Authorization: 'Bearer ' + s.token } })
+      var DAY = new Date().toISOString().slice(0, 10)
+      var K_APPLY = 'ng_apply_day'
+      var tries = 0
+
+      function token() {
+        try {
+          var s = JSON.parse(localStorage.getItem('ng_session') || 'null')
+          return (s && s.token) || null
+        } catch (e) { return null }
+      }
+
+      // 底部堆叠的提示条（同一 id 只出现一次）
+      function bar(id, html, bg) {
+        if (document.getElementById(id)) return
+        var n = document.querySelectorAll('[data-ngbar]').length
+        var b = document.createElement('div')
+        b.id = id
+        b.setAttribute('data-ngbar', '1')
+        b.style.cssText = 'position:fixed;left:0;right:0;bottom:' + (n * 44) + 'px;z-index:99999;' +
+          'background:' + bg + ';color:#fff;padding:10px 16px;font:14px/1.5 system-ui,sans-serif;' +
+          'text-align:center;box-shadow:0 -2px 12px rgba(0,0,0,.25)'
+        b.innerHTML = html + '<span style="cursor:pointer;opacity:.75;margin-left:14px" title="关闭">✕</span>'
+        b.lastChild.onclick = function () { b.remove() }
+        document.body.appendChild(b)
+      }
+
+      function run() {
+        var t = token()
+        if (!t) return                                  // 还没登录，下轮再探
+        var H = { Authorization: 'Bearer ' + t }
+
+        if (localStorage.getItem(K_APPLY) !== DAY) {
+          localStorage.setItem(K_APPLY, DAY)
+          fetch('/api/update/apply', { method: 'POST', headers: H })
+            .then(function (r) { return r.ok ? r.json() : null })
+            .then(function (d) {
+              if (!d) return
+              if (d.code && d.code.staged) {
+                bar('ngCodeBar', '更新已就绪 <b>v' + d.code.version +
+                  '</b>，<b>下次启动 App 时生效</b>（正在跑的任务不受影响）', '#2563eb')
+              }
+              if (d.ui && d.ui.applied > 0) location.reload()
+            })
+            .catch(function () {})
+        }
+
+        fetch('/api/update/check', { headers: H })
           .then(function (r) { return r.ok ? r.json() : null })
           .then(function (d) {
             if (!d || !d.update) return
-            shown = true
-            var url = d.download_url || 'https://ng-platform.ai/#download'
-            var b = document.createElement('div')
-            b.setAttribute('data-testid', 'update-banner')
-            b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#2563eb;' +
-              'color:#fff;padding:10px 16px;font:14px/1.5 system-ui,sans-serif;text-align:center;' +
-              'box-shadow:0 -2px 12px rgba(0,0,0,.25)'
-            b.innerHTML = '发现新版本 <b>v' + d.latest + '</b>（当前 v' + d.current +
-              '）　<a target="_blank" rel="noopener" href="' + url +
-              '" style="color:#fff;font-weight:600;text-decoration:underline">去官网下载 →</a>' +
-              '<span style="cursor:pointer;opacity:.75;margin-left:14px" title="关闭">✕</span>'
-            b.lastChild.onclick = function () { b.remove() }
-            document.body.appendChild(b)
+            bar('ngVerBar', '发现新版本 <b>v' + d.latest + '</b>（当前 v' + d.current + '）　' +
+              '<a target="_blank" rel="noopener" href="' +
+              (d.download_url || 'https://ng-platform.ai/#download') +
+              '" style="color:#fff;font-weight:600;text-decoration:underline">去官网下载 →</a>',
+              '#1f2937')
           })
           .catch(function () {})
       }
-      setInterval(check, 5000)
-      check()
+
+      var iv = setInterval(function () {
+        if (++tries > 120) { clearInterval(iv); return }   // 登录后最多探 10 分钟
+        run()
+      }, 5000)
+      run()
     })()
     </script>
   </body>

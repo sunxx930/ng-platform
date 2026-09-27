@@ -23,8 +23,9 @@ import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-# 发行方公钥（对应私钥在 ~/.secrets/ng-license/license-private.pem，只在发行方手里）
-PUBLIC_KEY_HEX = "d98e798c7b9b80520f3f5ace492b83e95a05b725dcff79e08a858e7a11a3758a"
+# 发行方公钥：唯一真源在顶层 ng_crypto（代码补丁的启动器也要用它，
+# 而启动器不能 import app.*，所以加密逻辑住在 app 外面）。此处保留别名，行为不变。
+from ng_crypto import PUBLIC_KEY_HEX, verify_blob  # noqa: E402  （保持既有导入位置）
 
 TRIAL_DAYS = 30
 _LIC_FILENAME = "license.txt"
@@ -89,13 +90,10 @@ def verify(token: str) -> dict | None:
     body, sig = token.split(".", 1)
     try:
         payload = _b64d(body)
-        signature = _b64d(sig)
     except Exception:      # noqa: BLE001
         return None
-    try:
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-        Ed25519PublicKey.from_public_bytes(bytes.fromhex(PUBLIC_KEY_HEX)).verify(signature, payload)
-    except Exception:      # noqa: BLE001
+    # sig 解不开/验不过都由 verify_blob 兜住（fail-closed）
+    if not verify_blob(payload, sig):
         return None
     try:
         return json.loads(payload.decode("utf-8"))

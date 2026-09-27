@@ -135,6 +135,14 @@ def update_apply(pack: int = 0, auth: dict = Depends(require_auth)):
             out["knowledge"] = apply_knowledge_pack(Path(ng_home) / "knowledge")
         except Exception as ex:  # noqa: BLE001
             out["knowledge"] = {"applied": False, "reason": f"{ex}"}
+    # 代码补丁：顺带**暂存**（不重启、不切换，下次启动生效）。
+    # 放在这里是为了让客户端既有的「每天自动拉一次」逻辑顺手把代码更新也备好，
+    # 客户无需任何额外操作，重启即新版本。
+    try:
+        from app.services.code_update import stage as _stage_code
+        out["code"] = _stage_code()
+    except Exception as ex:      # noqa: BLE001
+        out["code"] = {"staged": False, "reason": f"{type(ex).__name__}: {ex}"}
     return out
 
 
@@ -217,6 +225,27 @@ def tax_install_saved(auth: dict = Depends(require_auth)):
         raise HTTPException(400, "当前无 NG_HOME")
     from app.services.updater import install_saved_patches
     return install_saved_patches(Path(ng_home) / "knowledge")
+
+
+@app.get("/update/code/status")
+def code_update_status():
+    """代码补丁状态：active / pending（非空=有更新等下次启动生效）/ previous。"""
+    try:
+        from app.services.code_update import status as _st
+        return _st()
+    except Exception as ex:      # noqa: BLE001
+        return {"error": f"{type(ex).__name__}: {ex}"}
+
+
+@app.post("/update/code/apply")
+def code_update_apply(auth: dict = Depends(require_auth)):
+    """下载并**暂存**代码补丁。
+
+    刻意不提供「立即重启生效」：桌面版是单进程，运行中换代码会打断客户正在跑的
+    任务。启动那一刻天然没有在跑的活，所以只在下次启动切换。
+    """
+    from app.services.code_update import stage
+    return stage()
 
 
 @app.get("/auth/me")
@@ -1638,9 +1667,19 @@ _DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
 def _ui_roots() -> list:
-    """前端优先读 NG_HOME/ui（内容热更目录，方案A），否则回退到包内 frontend/dist。"""
-    ng_home = os.environ.get("NG_HOME", "").strip()
+    """前端资产查找顺序（逐文件、取第一个存在的）。
+
+    ① NG_UI_ROOT —— 代码载荷自带的前端（ng_boot 设置）。
+       **必须最优先**：否则存量客户 `NG_HOME/ui` 里热更下来的旧资产会盖住
+       载荷里的新界面，出现"代码更新了但界面还是老的"。
+    ② NG_HOME/ui —— 遗留的内容热更目录（老客户端路径，继续兼容）
+    ③ 包内 frontend/dist —— 最终兜底
+    """
     roots = []
+    payload_ui = os.environ.get("NG_UI_ROOT", "").strip()
+    if payload_ui and Path(payload_ui).is_dir():
+        roots.append(Path(payload_ui))
+    ng_home = os.environ.get("NG_HOME", "").strip()
     if ng_home:
         roots.append(Path(ng_home) / "ui")
     if _DIST.exists() and (_DIST / "index.html").exists():

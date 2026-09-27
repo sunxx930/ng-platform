@@ -26,6 +26,8 @@ dist/
 # Windows（Wine）构建的独立产物目录
 build-win/
 dist-win/
+# 构建期生成的中间文件（如 shell.json）
+.build/
 *.dmg
 *.pkg
 scripts/ocr

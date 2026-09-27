@@ -11,8 +11,10 @@
 #
 # 注意: 打包必须在目标平台本身进行（PyInstaller 不支持跨平台）。
 
+import json
 import os
 import platform
+import re
 import sys
 from pathlib import Path
 
@@ -51,6 +53,18 @@ if not _TAX_KEY.is_file() and not _ALLOW_NO_TAX:
 if _TAX_KEY.is_file():
     _datas.append((str(_TAX_KEY), "."))
 
+# shell.json —— 外壳能力标记（代码补丁的兼容闸门）。
+# 从 ng_boot 读 PAYLOAD_API、从 app/version.py 读版本，保证与代码同源、不手工维护。
+_ngboot_src = (ROOT / "ng_boot.py").read_text(encoding="utf-8")
+_payload_api = int(re.search(r"PAYLOAD_API\s*=\s*(\d+)", _ngboot_src).group(1))
+_app_ver = re.search(r'VERSION\s*=\s*"([^"]+)"',
+                     (ROOT / "app" / "version.py").read_text(encoding="utf-8")).group(1)
+_shell_json = ROOT / ".build" / "shell.json"
+_shell_json.parent.mkdir(parents=True, exist_ok=True)
+_shell_json.write_text(json.dumps({"shell_version": _app_ver, "payload_api": _payload_api}),
+                       encoding="utf-8")
+_datas.append((str(_shell_json), "."))
+
 
 a = Analysis(
     [str(ROOT / "scripts" / "desktop_entry.py")],
@@ -87,6 +101,10 @@ a = Analysis(
         "app.workers.report",
         "app.workers.transfer_escalation",
         "app.workers.auto_agent",
+        # 代码补丁（懒加载 + 顶层加载器，静态分析抓不到）
+        "app.services.code_update",
+        "ng_boot",
+        "ng_crypto",
     ],
     hookspath=[],
     hooksconfig={},
