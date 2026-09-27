@@ -36,7 +36,30 @@ def _front(text: str, key: str) -> str:
     return ""
 
 
+def _note_if_regulations(hits: list[dict]) -> None:
+    """试用期口径：只有用到**法规**才开始计时（第一批案例不触发收费倒计时）。"""
+    if any(h.get("type") == "法规实务" for h in hits):
+        try:
+            from app.services.license import note_use
+            note_use()
+        except Exception:      # noqa: BLE001
+            pass
+
+
 def search(query: str, topn: int = 3, min_score: int = 2) -> list[dict]:
+    """优先语义检索（模型随知识包下发）；模型不在或依赖缺失 → 回退关键词。"""
+    try:
+        from app.services import kb_semantic
+        if kb_semantic.available():
+            hits = kb_semantic.search(query, topn=topn)
+            _note_if_regulations(hits)
+            return hits
+    except Exception:          # noqa: BLE001
+        pass                   # 语义不可用不该拖垮检索，回退关键词
+    return _search_keyword(query, topn=topn, min_score=min_score)
+
+
+def _search_keyword(query: str, topn: int = 3, min_score: int = 2) -> list[dict]:
     terms = [t for t in _TERM.findall(query or "") if t not in _STOP]
     if not terms:
         return []
@@ -56,13 +79,7 @@ def search(query: str, topn: int = 3, min_score: int = 2) -> list[dict]:
                      "score": score, "snippet": snippet})
     hits.sort(key=lambda h: h["score"], reverse=True)
     out = hits[:topn]
-    # 试用期口径：**只有用到法规才开始计时**（第一批案例不触发收费倒计时）
-    if any(h.get("type") == "法规实务" for h in out):
-        try:
-            from app.services.license import note_use
-            note_use()
-        except Exception:      # noqa: BLE001
-            pass
+    _note_if_regulations(out)
     return out
 
 
