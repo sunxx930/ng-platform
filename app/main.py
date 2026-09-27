@@ -138,6 +138,26 @@ def update_apply(pack: int = 0, auth: dict = Depends(require_auth)):
     return out
 
 
+@app.get("/license/status")
+def license_status():
+    """税务数据库授权状态（App 本身免费，不受影响）。
+
+    state: inactive（没用过税务库）/ trial / licensed / expired
+    """
+    from app.services.license import status
+    return status()
+
+
+@app.post("/license/activate")
+def license_activate(payload: dict):
+    """激活授权串。payload: {"token": "<授权串>"}"""
+    from app.services.license import save_token, status
+    res = save_token(str((payload or {}).get("token", "")))
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("reason") or "授权串无效")
+    return {"ok": True, **status()}
+
+
 @app.post("/update/knowledge")
 def update_knowledge(auth: dict = Depends(require_auth)):
     """单独拉知识包（法规/案例库）。已是最新则直接返回，不重复下载。"""
