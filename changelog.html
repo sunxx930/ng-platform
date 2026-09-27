@@ -19,13 +19,17 @@ code{background:#202a44;padding:1px 5px;border-radius:5px;font-size:.9em}
 升级内容分四类标注：<strong>新增 / 修复 / 安全 / 其他</strong>；用户可见项尽量口语化。
 本文从下往上：新版本在上。</p>
 </blockquote>
-<h2>v1.2.7（2026-09-17）— 税务知识库（检索接入）</h2>
+<h2>v1.2.7（2026-09-27）— 税务版（知识库 + 离线授权）</h2>
 <p><strong>新增</strong>
 - 本地知识库 <code>~/.ng-platform/knowledge/</code>：Agent 执行时按任务标题/描述检索 TopN 条，注入上下文并在交付中标注来源（仅参考、以官方为准）
 - 入库/检索工具：<code>scripts/kb_ingest.py</code>（抽取+脱敏+标签）、<code>scripts/kb_search.py</code>（关键词检索）
 - <strong>图片识别三层</strong>：矢量图/SmartArt/图表文字（XML 抽取）+ 图表数值 + 位图 macOS Vision OCR（离线免费、中英）
 - 知识库属内容资产 → 可用内容热更发布，客户端免重装
-- 版本 → 1.2.7</p>
+- <strong>税务版</strong>：安装包内置税务知识库（案例库 + 语义检索模型），首次启动问一句「要启用税务版吗」，启用后即可检索；<strong>离线可用，数据不出本机</strong>
+- <strong>税务库独立授权</strong>：离线授权串（Ed25519 签名），<strong>App 本身免费</strong>；税务库含 <strong>30 天试用</strong>，试用期从<strong>法规库启用</strong>时起算
+- 版本 → 1.2.7
+<strong>安全</strong>
+- 知识库密文随包下发，运行时才解开；工作版数据（映射表等）永不随包交付</p>
 <h2>v1.2.6（2026-09-14）— 产品界面品牌 logo</h2>
 <p><strong>修复</strong>
 - 产品界面（顶栏/登录页/欢迎页）logo 由 🐳 emoji 换成<strong>真实品牌 logo</strong>（白底圆角，与官网一致）；老用户经内容热更自动获得
