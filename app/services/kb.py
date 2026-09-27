@@ -52,9 +52,18 @@ def search(query: str, topn: int = 3, min_score: int = 2) -> list[dict]:
                 pos = i
         snippet = re.sub(r"\s+", " ", text[max(0, pos - 200): pos + 600]).strip()
         hits.append({"file": f.name, "title": _front(text, "title") or f.stem,
-                     "source": _front(text, "source"), "score": score, "snippet": snippet})
+                     "source": _front(text, "source"), "type": _front(text, "type"),
+                     "score": score, "snippet": snippet})
     hits.sort(key=lambda h: h["score"], reverse=True)
-    return hits[:topn]
+    out = hits[:topn]
+    # 试用期口径：**只有用到法规才开始计时**（第一批案例不触发收费倒计时）
+    if any(h.get("type") == "法规实务" for h in out):
+        try:
+            from app.services.license import note_use
+            note_use()
+        except Exception:      # noqa: BLE001
+            pass
+    return out
 
 
 def context_block(query: str, topn: int = 3) -> str:
