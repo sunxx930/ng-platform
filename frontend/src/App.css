@@ -247,3 +247,12 @@ button.link:hover { transform: none; color: var(--accent); }
 .brand-logo img{height:30px;width:auto;display:block}
 .brand-logo.sm{padding:5px 8px;border-radius:8px}
 .brand-logo.sm img{height:22px}
+
+/* v1.3 更新提示条：只提示、不打断（代码补丁下次启动生效；版本升级去官网） */
+.update-bar { position: sticky; top: 0; z-index: 50; margin: -18px -18px 18px;
+  padding: 10px 16px; text-align: center; font-size: 14px; line-height: 1.5;
+  background: var(--accent, #2563eb); color: #fff; border-radius: 0; }
+.update-bar a { color: #fff; font-weight: 600; text-decoration: underline; margin-left: 8px; }
+.update-bar-dark { background: #1f2937; }
+.update-bar-x { cursor: pointer; opacity: .75; margin-left: 14px; }
+.update-bar-x:hover { opacity: 1; }

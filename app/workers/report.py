@@ -5,11 +5,6 @@
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-from app.domain import events
-from app.domain.task import TaskStatus
 from app.workers.base import Worker
 
 
@@ -17,27 +12,19 @@ class ReportWorker(Worker):
     name = "report"
     interval_s = 30.0
 
-    def __init__(self, *a, **kw):
-        super().__init__(*a, **kw)
-        self._notify_file = self._state_dir / "notifications.jsonl"
+    def process(self, task_id: str) -> None:
+        """**已停写**（2026-09-27）。
 
-    def process(self, task_id: str):
-        evs = self._log.replay(task_id=task_id)
-        if not evs:
-            return
-        latest = evs[-1]
-        if latest["event_type"] not in (
-            events.EventType.TASK_STATE_CHANGED.value,
-            events.EventType.REVIEW_DECIDED.value,
-            events.EventType.APPROVAL_DECIDED.value,
-        ):
-            return
-        # 推送到待发送队列（通知层/渠道对接时消费）
-        self._notify_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._notify_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "task_id": task_id,
-                "event": latest["event_type"],
-                "payload": latest["payload"],
-                "to": ["责任人", "复核人", "用户"],   # 骨架简化
-            }, ensure_ascii=False) + "\n")
+        原实现每次 tick 把「最新事件是状态变更/复核/审批」的任务重新追加到
+        notifications.jsonl；但任务完成后它的"最新事件"永远停在那类事件上，
+        于是**每 30 秒重复写同一条**、且没有任何去重。
+
+        实测代价：dev 实例连跑 19 天 → 该文件 6,288,387 行 / **1.53 GB**，
+        抽样去重后仅 796 条唯一内容；而**没有任何代码读它**（通知早已事件派生，
+        见 GET /notifications → _derive_notifications(log.replay())）。
+        除了白占磁盘，它当时还落在 iCloud 同步目录里，拖垮同步进程。
+
+        保留本 Worker 类（不删）是为了不动 workers 启动顺序与既有测试。
+        """
+        return
+

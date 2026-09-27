@@ -5,44 +5,10 @@
     <link rel="icon" type="image/png" href="/assets/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>frontend</title>
-    <script type="module" crossorigin src="/assets/index-DdfIYQ2q.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BfnmOkmj.css">
+    <script type="module" crossorigin src="/assets/index-DzFMU-Gn.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-tjbbtrsS.css">
   </head>
   <body>
     <div id="root"></div>
-    <!-- 更新提示条：登录后调本机 /api/update/check，有新版本就在底部常驻提示。
-         自包含、无依赖、失败静默——不碰主流程。走内容热更下发，老客户免重装即可收到。 -->
-    <script>
-    (function () {
-      var shown = false, tries = 0
-      function check() {
-        if (shown || tries++ > 120) return              // 登录后最多探 10 分钟
-        var s
-        try { s = JSON.parse(localStorage.getItem('ng_session') || 'null') } catch (e) { return }
-        if (!s || !s.token) return                      // 还没登录，下轮再探
-        fetch('/api/update/check', { headers: { Authorization: 'Bearer ' + s.token } })
-          .then(function (r) { return r.ok ? r.json() : null })
-          .then(function (d) {
-            if (!d || !d.update) return
-            shown = true
-            var url = d.download_url || 'https://ng-platform.ai/#download'
-            var b = document.createElement('div')
-            b.setAttribute('data-testid', 'update-banner')
-            b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#2563eb;' +
-              'color:#fff;padding:10px 16px;font:14px/1.5 system-ui,sans-serif;text-align:center;' +
-              'box-shadow:0 -2px 12px rgba(0,0,0,.25)'
-            b.innerHTML = '发现新版本 <b>v' + d.latest + '</b>（当前 v' + d.current +
-              '）　<a target="_blank" rel="noopener" href="' + url +
-              '" style="color:#fff;font-weight:600;text-decoration:underline">去官网下载 →</a>' +
-              '<span style="cursor:pointer;opacity:.75;margin-left:14px" title="关闭">✕</span>'
-            b.lastChild.onclick = function () { b.remove() }
-            document.body.appendChild(b)
-          })
-          .catch(function () {})
-      }
-      setInterval(check, 5000)
-      check()
-    })()
-    </script>
   </body>
 </html>

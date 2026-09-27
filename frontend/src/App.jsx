@@ -217,6 +217,7 @@ function App() {
   const [opinions, setOpinions] = useState({})   // v1.1：打回修改意见（复核需填）
   const [ver, setVer] = useState('')             // v1.2(A)：当前版本 + 检查更新
   const [codeReady, setCodeReady] = useState('')  // v1.3：代码补丁已暂存，等下次启动生效
+  const [verUpdate, setVerUpdate] = useState(null) // v1.3：有新版安装包（需重装）时提示
   const [recheck, setRecheck] = useState({})     // v1.2.1：数值任务自动复算结果(tid→{verdict,note})
   const [materials, setMaterials] = useState([]) // v1.2.1：项目材料库
 
@@ -230,6 +231,15 @@ function App() {
   useEffect(() => {
     if (!authed) return
     api('/version', token).then((d) => setVer(d.version || '')).catch(() => {})
+  }, [authed, token])
+
+  // v1.3：登录后自检一次新版安装包（老外壳需要重装才能进入补丁模式时提示；
+  // 代码补丁本身走 /update/apply 暂存，见下方"内容热更"那个 effect）
+  useEffect(() => {
+    if (!authed) return
+    api('/update/check', token)
+      .then((d) => { if (d?.update) setVerUpdate(d) })
+      .catch(() => {})          // 离线/失败 → 静默，不打扰
   }, [authed, token])
 
   function checkUpdate() {
@@ -468,6 +478,21 @@ function App() {
 
   return (
     <div className="app">
+      {/* 更新提示（v1.3）：代码补丁走"下次启动生效"，版本升级需去官网重装 —— 两者都只提示、不打断 */}
+      {codeReady && (
+        <div className="update-bar" data-testid="code-ready-bar">
+          更新已就绪 <b>v{codeReady}</b>，<b>下次启动 App 时生效</b>（正在跑的任务不受影响）
+          <span className="update-bar-x" onClick={() => setCodeReady('')}>✕</span>
+        </div>
+      )}
+      {verUpdate && (
+        <div className="update-bar update-bar-dark" data-testid="version-bar">
+          发现新版本 <b>v{verUpdate.latest}</b>（当前 v{verUpdate.current}）
+          <a href={verUpdate.download_url || 'https://ng-platform.ai/#download'}
+             target="_blank" rel="noopener">去官网下载 →</a>
+          <span className="update-bar-x" onClick={() => setVerUpdate(null)}>✕</span>
+        </div>
+      )}
       <header className="topbar">
         <div className="brand">
           <span className="brand-logo"><img src="/assets/logo-trim.png" alt="NG AI Platform" /></span>
