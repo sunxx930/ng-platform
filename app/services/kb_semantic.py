@@ -155,18 +155,37 @@ def load_index():
     if not key:
         raise RuntimeError("无授权/试用密钥，无法解开内容补丁")
 
-    Vs, metas = [], []
+    Vs, metas, bad = [], [], []
     for p in packs:
-        blob = p.read_bytes()
-        plain = AESGCM(key).decrypt(blob[:12], blob[12:], None)
-        with _zip.ZipFile(_io.BytesIO(plain)) as zf:
-            V = _np.load(_io.BytesIO(zf.read("index/vec.npy")))
-            metas += [json.loads(l) for l in
-                      zf.read("index/meta.jsonl").decode("utf-8").splitlines() if l.strip()]
-        Vs.append(V)
+        try:
+            blob = p.read_bytes()
+            plain = AESGCM(key).decrypt(blob[:12], blob[12:], None)
+            with _zip.ZipFile(_io.BytesIO(plain)) as zf:
+                V = _np.load(_io.BytesIO(zf.read("index/vec.npy")))
+                metas += [json.loads(l) for l in
+                          zf.read("index/meta.jsonl").decode("utf-8").splitlines() if l.strip()]
+            Vs.append(V)
+        except Exception as e:      # noqa: BLE001
+            # 单个补丁坏了不该把整个检索拖垮；但要**响亮地**报出来（免得内容静默缺失）
+            bad.append(f"{p.name}: {e}")
+            print(f"[kb] ⚠ 补丁加载失败，已跳过：{p.name} —— {e}", flush=True)
+    if not Vs:
+        raise RuntimeError(f"全部内容补丁都加载失败: {bad}")
     M = _np.vstack(Vs).astype(_np.float32) if len(Vs) > 1 else Vs[0].astype(_np.float32)
     _index_cache = (M, metas)
     return _index_cache
+
+
+def gate_reason() -> str | None:
+    """案例库闸门原因（None = 可用）。
+
+    用户 2026-09-27 定：**法规库上线后，必须先下载法规库才能继续用案例库**。
+    """
+    try:
+        from app.services.updater import case_gate_reason
+        return case_gate_reason(kb_dir())
+    except Exception:      # noqa: BLE001
+        return None
 
 
 def search(query: str, topn: int = 3, recall: int = 20) -> list[dict]:
@@ -175,6 +194,11 @@ def search(query: str, topn: int = 3, recall: int = 20) -> list[dict]:
     没有重排模型（小包形态）时退化为纯语义 top-n，score 即余弦相似度。
     """
     import numpy as np
+    # 闸门：法规库上线而未装 → 案例库整体不可用（堵试用期漏洞）
+    reason = gate_reason()
+    if reason:
+        print(f"[kb] 案例库不可用：{reason}", flush=True)
+        return []
     V, meta = load_index()
     qv = np.array(embed([query], is_query=True)[0], dtype=np.float32)
     sims = V @ qv

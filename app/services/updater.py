@@ -57,6 +57,46 @@ def patch_files(knowledge_dir: Path) -> list[Path]:
     return sorted(d.glob("*.enc")) if d.is_dir() else []
 
 
+# ---------- 案例库闸门（用户 2026-09-27 定）----------
+# 「法规库上线后，必须下载法规库才能继续用案例库」。
+# 真正的目的是堵试用期漏洞：试用期从**法规库启用**才起算（规则「甲」），
+# 只装案例库的客户会永远不烧试用期——强制装法规库 = 强制起算。
+_REGS_REQUIRED = ".regs_required"
+_REGS_INSTALLED = ".regs_installed"
+
+
+def regs_required(knowledge_dir: Path) -> bool:
+    """法规库是否已上线（manifest 里出现过 knowledge_regs）。落了标记就一直要求。"""
+    return (Path(knowledge_dir) / _REGS_REQUIRED).is_file()
+
+
+def regs_installed(knowledge_dir: Path) -> bool:
+    return (Path(knowledge_dir) / _REGS_INSTALLED).is_file()
+
+
+def refresh_regs_requirement(knowledge_dir: Path) -> bool:
+    """查一次 manifest 更新「法规库是否已上线」。取不到就用上次的标记（不误放行）。"""
+    knowledge_dir = Path(knowledge_dir)
+    try:
+        required = bool(_manifest().get("knowledge_regs"))
+    except Exception:      # noqa: BLE001
+        return regs_required(knowledge_dir)
+    if required:
+        try:
+            knowledge_dir.mkdir(parents=True, exist_ok=True)
+            (knowledge_dir / _REGS_REQUIRED).write_text("1", encoding="utf-8")
+        except Exception:      # noqa: BLE001
+            pass
+    return required
+
+
+def case_gate_reason(knowledge_dir: Path) -> str | None:
+    """案例库能不能用。返回 None = 可用；否则返回给用户看的原因。"""
+    if regs_required(knowledge_dir) and not regs_installed(knowledge_dir):
+        return "法规库已上线，需先下载法规库后才能继续使用案例库"
+    return None
+
+
 # 补丁 zip 里的顶层目录：内容（受保护，永不落明文）与模型（公开，落盘）
 _CONTENT_DIRS = ("tax-cases", "index", "tax-regs")
 
@@ -131,6 +171,10 @@ def _install_blob(blob: bytes, knowledge_dir: Path, version: str) -> dict:
     # 案例补丁不含 tax-regs/ → 装案例不烧试用期。
     if regs_installed:
         try:
+            (knowledge_dir / _REGS_INSTALLED).write_text("1", encoding="utf-8")
+        except Exception:      # noqa: BLE001
+            pass
+        try:
             note_use()
         except Exception:      # noqa: BLE001
             pass
@@ -189,7 +233,7 @@ def apply_knowledge_pack(knowledge_dir: Path, *, keep_encrypted: bool = True) ->
     与 UI 热更的区别：
     - 单个大文件（加密归档），不是逐文件 → 扩展名白名单不适用，改为整包 sha256 校验
     - 体积大 → 支持断点续传（下载到 .part，续传，校验通过才原子改名）
-    - 解密不在这里做：本函数只保证「正确、完整地把包放到该在的位置」
+    - 下载完交给 _install_blob：内存解密 → 模型落盘、内容转密文（不落明文）
 
     manifest 里对应字段：
         "knowledge": {"version": "2026-09", "url": "...", "sha256": "...", "size": 123}
@@ -198,30 +242,47 @@ def apply_knowledge_pack(knowledge_dir: Path, *, keep_encrypted: bool = True) ->
     knowledge_dir = Path(knowledge_dir)
     knowledge_dir.mkdir(parents=True, exist_ok=True)
     m = _manifest()
-    pack = m.get("knowledge") or {}
+    # 法规库是否已上线：顺带刷新闸门标记（离线时保留上次判断）
+    if m.get("knowledge_regs"):
+        try:
+            (knowledge_dir / _REGS_REQUIRED).write_text("1", encoding="utf-8")
+        except Exception:      # noqa: BLE001
+            pass
+
+    out = {"knowledge": _apply_one_pack(knowledge_dir, m.get("knowledge") or {}, "cases")}
+    # 法规库上线后必须装它（否则案例库被闸门挡）——所以有就一起拉
+    if m.get("knowledge_regs"):
+        out["knowledge_regs"] = _apply_one_pack(knowledge_dir, m.get("knowledge_regs") or {}, "regs")
+    out["applied"] = any(v.get("applied") for v in out.values() if isinstance(v, dict))
+    return out
+
+
+def _apply_one_pack(knowledge_dir: Path, pack: dict, tag: str) -> dict:
+    """下载并安装一个补丁（cases / regs 共用）。"""
     url = str(pack.get("url", "") or "")
     version = str(pack.get("version", "") or "")
     want = str(pack.get("sha256", "") or "").lower()
     if not url:
-        return {"applied": False, "version": version, "reason": "manifest 无知识包"}
+        return {"applied": False, "version": version, "reason": "manifest 无该补丁"}
 
-    cur = knowledge_dir / "version.json"
-    if cur.exists() and version:
-        try:
-            if json.loads(cur.read_text(encoding="utf-8")).get("version") == version:
-                return {"applied": False, "version": version, "reason": "已是最新"}
-        except Exception:  # noqa: BLE001
-            pass
+    mark = knowledge_dir / f".installed_{tag}"
+    if mark.is_file() and mark.read_text(encoding="utf-8").strip() == version:
+        return {"applied": False, "version": version, "reason": "已是最新"}
 
-    part = knowledge_dir / "kb.pack.part"
+    part = knowledge_dir / f"kb-{tag}.pack.part"
     try:
         _download(url, part, resume=True)
         blob = part.read_bytes()
         if want and hashlib.sha256(blob).hexdigest() != want:
             return {"applied": False, "version": version,
                     "reason": "sha256 校验失败（已保留 .part 供续传）"}
-        # 解密 + 解压在 _install_blob（与内嵌包同一套逻辑，别再写第二份）
-        return _install_blob(blob, knowledge_dir, version)
+        res = _install_blob(blob, knowledge_dir, version)
+        if res.get("applied"):
+            try:
+                mark.write_text(version, encoding="utf-8")
+            except Exception:      # noqa: BLE001
+                pass
+        return res
     except Exception as e:  # noqa: BLE001
         return {"applied": False, "version": version, "reason": f"失败: {e}"}
 

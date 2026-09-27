@@ -176,13 +176,24 @@ def tax_status():
     与安装包并列挂在官网（GitHub Release 资产），客户端按需下载。
     """
     from app.services.license import status as _lic
-    from app.services.updater import patch_files
+    from app.services.updater import (case_gate_reason, patch_files,
+                                      refresh_regs_requirement, regs_installed)
     ng_home = os.environ.get("NG_HOME", "").strip()
     kb = Path(ng_home) / "knowledge" if ng_home else None
     content = sorted(p.stem for p in (kb / "content").glob("*.enc")) if kb and (kb / "content").is_dir() else []
     saved = [p.name for p in patch_files(kb)] if kb else []
+    gate = None
+    if kb:
+        try:
+            refresh_regs_requirement(kb)      # 顺带看看法规库上线没
+        except Exception:      # noqa: BLE001
+            pass
+        gate = case_gate_reason(kb)
     return {"content": content, "saved_patches": saved,
-            "installed": bool(content), "license": _lic()}
+            "installed": bool(content), "license": _lic(),
+            # 法规库上线后：案例库要先装法规库才可用
+            "regs_installed": bool(kb and regs_installed(kb)),
+            "case_usable": gate is None, "gate_reason": gate}
 
 
 @app.post("/tax/enable")
