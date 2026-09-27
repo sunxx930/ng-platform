@@ -82,13 +82,58 @@ def apply_knowledge_pack(knowledge_dir: Path, *, keep_encrypted: bool = True) ->
     part = knowledge_dir / "kb.pack.part"
     try:
         _download(url, part, resume=True)
-        if want and hashlib.sha256(part.read_bytes()).hexdigest() != want:
-            return {"applied": False, "version": version, "reason": "sha256 校验失败（已保留 .part 供续传）"}
-        os.replace(part, knowledge_dir / ("kb.pack.enc" if keep_encrypted else "kb.pack"))
+        blob = part.read_bytes()
+        if want and hashlib.sha256(blob).hexdigest() != want:
+            return {"applied": False, "version": version,
+                    "reason": "sha256 校验失败（已保留 .part 供续传）"}
+        enc_path = knowledge_dir / "kb.pack.enc"
+        enc_path.write_bytes(blob)
+
+        # 解密需要授权里的包密钥；没有授权则只落地密文，等激活后再解
+        import re as _re
+        from app.services.license import pack_key
+        key = pack_key()
+        if not key:
+            return {"applied": True, "version": version, "reason": "已下载，待激活授权后解密"}
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        plain = AESGCM(key).decrypt(blob[:12], blob[12:], None)
+        import io as _io
+        import zipfile as _zip
+        # 解压到临时目录再原子搬入，避免半截状态
+        tmp = Path(tempfile.mkdtemp(prefix=".kb-", dir=str(knowledge_dir)))
+        with _zip.ZipFile(_io.BytesIO(plain)) as zf:
+            for name in zf.namelist():
+                rel = name.replace("\\", "/").lstrip("/")
+                if not rel or ".." in rel.split("/") or ":" in rel:
+                    continue
+                dst = (tmp / rel).resolve()
+                try:
+                    dst.relative_to(tmp.resolve())
+                except ValueError:
+                    continue
+                if name.endswith("/"):
+                    dst.mkdir(parents=True, exist_ok=True)
+                    continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(zf.read(name))
+        for sub in ("tax-cases", "index", "models"):
+            src = tmp / sub
+            if not src.is_dir():
+                continue
+            tgt = knowledge_dir / sub
+            old = knowledge_dir / (sub + ".old")
+            if tgt.exists():
+                os.replace(tgt, old)
+            os.replace(src, tgt)
+            import shutil as _sh
+            _sh.rmtree(old, ignore_errors=True)
+        import shutil as _sh
+        _sh.rmtree(tmp, ignore_errors=True)
+        part.unlink(missing_ok=True)
         cur.write_text(json.dumps({"version": version}, ensure_ascii=False), encoding="utf-8")
         return {"applied": True, "version": version, "reason": "ok"}
     except Exception as e:  # noqa: BLE001
-        return {"applied": False, "version": version, "reason": f"下载失败: {e}"}
+        return {"applied": False, "version": version, "reason": f"失败: {e}"}
 
 
 def apply_ui_update(ui_dir: Path) -> dict:

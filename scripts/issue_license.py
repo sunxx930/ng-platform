@@ -68,7 +68,12 @@ def main():
         return
 
     exp = a.exp or (date.today() + timedelta(days=a.days)).isoformat()
-    tok = sign({"v": 1, "tier": a.tier, "exp": exp, "mid": a.mid, "name": a.name})
+    # 税务知识包的解密密钥随授权下发：包可公开托管，没有它解不开
+    pkey = KEY.parent / "pack.key"
+    payload = {"v": 1, "tier": a.tier, "exp": exp, "mid": a.mid, "name": a.name}
+    if pkey.is_file():
+        payload["pk"] = pkey.read_bytes().hex()
+    tok = sign(payload)
     print()
     print("  " + tok)
     print()

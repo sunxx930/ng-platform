@@ -192,6 +192,19 @@ def status() -> dict:
             "trial_start": start.isoformat(), "machine_id": machine_id()}
 
 
+def pack_key() -> bytes | None:
+    """税务知识包的解密密钥——**只随有效授权下发**。
+
+    包本身可以公开托管（GitHub Pages 等）：没有这个密钥就是一堆乱码，
+    所以满足"客户无法单独提取"。
+    """
+    info = verify(load_token())
+    if not info:
+        return None
+    k = str(info.get("pk") or "")
+    return bytes.fromhex(k) if k else None
+
+
 def kb_unlocked() -> bool:
     """**税务知识库**是否可读（App 本身不受此限，免费）。
 
