@@ -11,6 +11,7 @@
 #
 # 注意: 打包必须在目标平台本身进行（PyInstaller 不支持跨平台）。
 
+import os
 import platform
 import sys
 from pathlib import Path
@@ -24,19 +25,51 @@ ROOT = Path(SPECPATH)
 # 资源根（相对 __file__ 解析）：入口在 _MEIPASS 下，templates.json 等在 app/agents/
 # 打包时按项目原结构打进去，运行时代码用 Path(__file__).parent 解析到 _MEIPASS 内。
 
+# 税务「小包」（加密，方案B：随安装包下发；无服务器）
+#   mac  → 内嵌进 .app（拖进「应用程序」时包要跟着走），放 _MEIPASS 根，运行时按名找得到
+#   win  → **不内嵌**：onefile 会把 datas 每次启动都解压到临时目录，30MB 白等；
+#          改为随 exe 并排放进 zip，运行时从 exe 同级目录取（见 updater.bundled_pack_path）
+# 试用密钥（方案A）体积小，两端都内嵌——win 不必再往 zip 里塞第二个文件。
+_BUNDLED_PACK = ROOT / "data" / "kb.pack.enc"
+_TAX_KEY = ROOT / "data" / "trial_pack.key"
+_ALLOW_NO_TAX = os.environ.get("NG_ALLOW_NO_TAX_PACK") == "1"
+
+_datas = [
+    # 前端 dist（后端托管，含 index.html + assets）
+    (str(ROOT / "frontend" / "dist"), "frontend/dist"),
+    # 后端数据文件
+    (str(ROOT / "app" / "agents" / "templates.json"), "app/agents"),
+    # 迁移与 schema（JSONL 模式不跑，但保留完整性）
+    (str(ROOT / "migrations"), "migrations"),
+    (str(ROOT / "schema.sql"), "."),
+]
+
+# 缺文件就**报错**，别悄悄打出一个没有税务库的包（换机器/CI 重建时最容易踩）
+if not _TAX_KEY.is_file() and not _ALLOW_NO_TAX:
+    raise SystemExit(
+        "[spec] ✗ 缺少 data/trial_pack.key（内置试用密钥）。\n"
+        "       生成：cp ~/.secrets/ng-license/pack.key data/trial_pack.key\n"
+        "       确要打不含税务版的包：NG_ALLOW_NO_TAX_PACK=1 pyinstaller ..."
+    )
+if _TAX_KEY.is_file():
+    _datas.append((str(_TAX_KEY), "."))
+
+if not IS_WIN:
+    if not _BUNDLED_PACK.is_file() and not _ALLOW_NO_TAX:
+        raise SystemExit(
+            "[spec] ✗ 缺少 data/kb.pack.enc（税务小包，mac 要内嵌进 .app）。\n"
+            "       生成：python3 scripts/build_kbpack.py --version <ver> --src <交付版库> --out data\n"
+            "       确要打不含税务版的包：NG_ALLOW_NO_TAX_PACK=1 pyinstaller ..."
+        )
+    if _BUNDLED_PACK.is_file():
+        _datas.append((str(_BUNDLED_PACK), "."))
+
+
 a = Analysis(
     [str(ROOT / "scripts" / "desktop_entry.py")],
     pathex=[str(ROOT)],
     binaries=[],
-    datas=[
-        # 前端 dist（后端托管，含 index.html + assets）
-        (str(ROOT / "frontend" / "dist"), "frontend/dist"),
-        # 后端数据文件
-        (str(ROOT / "app" / "agents" / "templates.json"), "app/agents"),
-        # 迁移与 schema（JSONL 模式不跑，但保留完整性）
-        (str(ROOT / "migrations"), "migrations"),
-        (str(ROOT / "schema.sql"), "."),
-    ],
+    datas=_datas,
     hiddenimports=[
         # FastAPI/uvicorn 全家（字符串 import 抓不到的）
         "uvicorn.logging",

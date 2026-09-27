@@ -51,7 +51,8 @@ def test_apply_content_update(env, monkeypatch):
     h = _h(c)
     r = c.post("/update/apply", headers=h)
     assert r.status_code == 200, r.text
-    assert r.json()["applied"] == 1
+    # 响应自 192ea62 起按内容域分组（{"ui": {...}, "knowledge": {...}}）
+    assert r.json()["ui"]["applied"] == 1
     assert (env / "ui" / "assets" / "app.js").read_text(encoding="utf-8") == "console.log('v2')"
     assert (env / "ui" / "version.json").read_text(encoding="utf-8").find("2.0") >= 0
     # 状态
@@ -73,6 +74,6 @@ def test_apply_rejects_traversal(env, monkeypatch):
     c = TestClient(app)
     h = _h(c)
     r = c.post("/update/apply", headers=h).json()
-    assert r["applied"] == 0 and r["failed"] == 1
+    assert r["ui"]["applied"] == 0 and r["ui"]["failed"] == 1
     assert not (env / "escape.js").exists()
     assert not (env.parent / "escape.js").exists()

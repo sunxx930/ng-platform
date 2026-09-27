@@ -168,6 +168,37 @@ def update_knowledge(auth: dict = Depends(require_auth)):
     return apply_knowledge_pack(Path(ng_home) / "knowledge")
 
 
+@app.get("/tax/status")
+def tax_status():
+    """税务版状态：安装包是否内嵌知识包 / 本机是否已启用 / 授权状态。
+
+    无服务器分发形态（方案B）：知识包随安装包下发，首次启动由客户端询问是否启用。
+    """
+    from app.services.license import status as _lic
+    from app.services.updater import bundled_pack_path
+    ng_home = os.environ.get("NG_HOME", "").strip()
+    installed = False
+    if ng_home:
+        installed = (Path(ng_home) / "knowledge" / "index" / "vec.npy").is_file()
+    bp = bundled_pack_path()
+    return {"bundled_available": bool(bp),
+            "installed": installed,
+            "license": _lic()}
+
+
+@app.post("/tax/enable")
+def tax_enable(auth: dict = Depends(require_auth)):
+    """启用税务版：展开**随安装包内嵌**的加密知识包（不联网）。
+
+    没有授权时只落密文，待激活后解开；授权状态见 /license/status。
+    """
+    ng_home = os.environ.get("NG_HOME", "").strip()
+    if not ng_home:
+        raise HTTPException(400, "当前无 NG_HOME，未启用内容热更")
+    from app.services.updater import install_bundled_pack
+    return install_bundled_pack(Path(ng_home) / "knowledge")
+
+
 @app.get("/auth/me")
 def auth_me(auth: dict = Depends(require_auth)):
     """当前身份与权限级别（前端权限感知：隐藏/禁用 L3 动作）。"""

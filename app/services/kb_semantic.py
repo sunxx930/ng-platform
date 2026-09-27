@@ -1,12 +1,14 @@
 """语义检索（本地小模型，零外部服务）。
 
-模型随**知识包**下发，不放安装包里（安装包小、升级走热更）：
-    NG_HOME/knowledge/models/embed/    bge-small-zh-v1.5 (ONNX int8, 23MB)
-    NG_HOME/knowledge/models/rerank/   bge-reranker-base  (ONNX int8, 279MB)
-    NG_HOME/knowledge/index/           vec.npy + meta.jsonl
+随「小包」（方案B：无服务器 → 知识包内嵌进安装包）下发的内容：
+    NG_HOME/knowledge/models/embed/    bge-small-zh-v1.5 (ONNX int8, 23MB)  ← 必需
+    NG_HOME/knowledge/index/           vec.npy + meta.jsonl                 ← 必需
+    NG_HOME/knowledge/models/rerank/   bge-reranker-base  (ONNX int8, 283MB) ← 可选
 
-两阶段：纯语义召回 top-K → cross-encoder 精排 top-N。
-实测（3820 块 / 163 份）：三查询全部进 top-2，单次约 1 秒。
+两阶段：纯语义召回 top-K →（有重排模型时）cross-encoder 精排 top-N。
+实测（3820 块 / 163 份）：带重排三查询全部进 top-2，单次约 1 秒。
+**重排是可选增强**：小包不带 283MB 重排模型，此时退化为纯语义召回。
+不建议长期缺重排——实测纯语义会被"表面相似"骗（讲境外派遣的会压过正确答案）。
 
 模型不存在或依赖缺失时，调用方应回退到 kb.py 的关键词检索（见 kb.search）。
 """
@@ -36,16 +38,25 @@ def index_dir() -> Path:
     return kb_dir() / "index"
 
 
+def _has_model(kind: str) -> bool:
+    d = models_dir() / kind
+    return (d / "model.onnx").is_file() and (d / "tokenizer.json").is_file()
+
+
+def rerank_available() -> bool:
+    """重排模型在不在（283MB，小包不带 → 可选增强）。"""
+    return _has_model("rerank")
+
+
 def available() -> bool:
-    """语义检索是否可用（模型 + 索引 + 运行时都在）。"""
+    """语义检索是否可用。**只要求 embed + 索引 + 运行时**——重排是可选增强，
+    缺它照样能纯语义召回（见 rerank_available）。"""
     try:
         import onnxruntime  # noqa: F401
         from tokenizers import Tokenizer  # noqa: F401
     except Exception:      # noqa: BLE001
         return False
-    e, r = models_dir() / "embed", models_dir() / "rerank"
-    return ((e / "model.onnx").is_file() and (e / "tokenizer.json").is_file()
-            and (r / "model.onnx").is_file() and (r / "tokenizer.json").is_file()
+    return (_has_model("embed")
             and (index_dir() / "vec.npy").is_file())
 
 
@@ -112,22 +123,26 @@ def load_index():
 
 
 def search(query: str, topn: int = 3, recall: int = 20) -> list[dict]:
-    """语义检索：召回 recall 条 → 重排取 topn。返回体与 kb.search 一致。"""
+    """语义检索：召回 recall 条 →（有重排模型时）精排取 topn。返回体与 kb.search 一致。
+
+    没有重排模型（小包形态）时退化为纯语义 top-n，score 即余弦相似度。
+    """
     import numpy as np
-    from app.services.license import note_use
     V, meta = load_index()
     qv = np.array(embed([query], is_query=True)[0], dtype=np.float32)
-    order = np.argsort(-(V @ qv))[:recall]
+    sims = V @ qv
+    order = np.argsort(-sims)[:recall]
     cand = [meta[i] for i in order]
-    scores = rerank(query, [c["snippet"] for c in cand])
+    if rerank_available():
+        scores = rerank(query, [c["snippet"] for c in cand])
+    else:
+        scores = [float(sims[i]) for i in order]
     ranked = sorted(zip(scores, cand), key=lambda x: -x[0])[:topn]
     out = []
     for sc, c in ranked:
         out.append({**c, "score": round(sc, 4)})
-    # 试用期口径：只有用到**法规**才开始计时（案例不触发）
-    if any(c.get("type") == "法规实务" for c in out):
-        try:
-            note_use()
-        except Exception:      # noqa: BLE001
-            pass
+    # 试用期口径（2026-09-27 用户定：甲）——**检索不触发起算**。
+    # 起算绑定「法规库（第二批法条）启用」，见 updater._install_blob 里的 note_use()。
+    # 此前按「命中 type == 法规实务」触发是错的：案例包里就有 538 块贴该标签的实务文章，
+    # 客户搜案例会把试用期烧掉。
     return out

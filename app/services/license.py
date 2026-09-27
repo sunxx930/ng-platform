@@ -18,6 +18,7 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -192,17 +193,43 @@ def status() -> dict:
             "trial_start": start.isoformat(), "machine_id": machine_id()}
 
 
-def pack_key() -> bytes | None:
-    """税务知识包的解密密钥——**只随有效授权下发**。
+def _trial_key() -> bytes | None:
+    """内置试用密钥（方案 A：试用即全量，随包下发）。
 
-    包本身可以公开托管（GitHub Pages 等）：没有这个密钥就是一堆乱码，
-    所以满足"客户无法单独提取"。
+    无服务器时，知识包随安装包下发；试用要能用，密钥就必须在客户机器上。
+    因此这是**软控制**——防顺手拷贝，不防破解（用户 2026-09-27 已知悉并选定）。
+    密钥文件由打包脚本从 ~/.secrets 落进来，**不落进代码仓库**。
+    """
+    cands: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        cands.append(Path(meipass) / "trial_pack.key")
+    if getattr(sys, "frozen", False):
+        cands.append(Path(sys.executable).resolve().parent / "trial_pack.key")
+    cands.append(Path(__file__).resolve().parent.parent.parent / "data" / "trial_pack.key")
+    for p in cands:
+        try:
+            if p.is_file():
+                return p.read_bytes()[:32]
+        except Exception:      # noqa: BLE001
+            continue
+    return None
+
+
+def pack_key() -> bytes | None:
+    """税务知识包的解密密钥。
+
+    优先用**授权串里带的**密钥（付费授权）；没有授权串时回落到**内置试用密钥**，
+    但受试用期约束：到期（expired）就不给密钥 → 解不开新包。
     """
     info = verify(load_token())
-    if not info:
-        return None
-    k = str(info.get("pk") or "")
-    return bytes.fromhex(k) if k else None
+    if info:
+        k = str(info.get("pk") or "")
+        if k:
+            return bytes.fromhex(k)
+    if status().get("state") in ("licensed", "trial", "inactive"):
+        return _trial_key()
+    return None
 
 
 def kb_unlocked() -> bool:

@@ -23,6 +23,9 @@ node_modules/
 # PyInstaller 打包产物
 build/
 dist/
+# Windows（Wine）构建的独立产物目录
+build-win/
+dist-win/
 *.dmg
 *.pkg
 scripts/ocr

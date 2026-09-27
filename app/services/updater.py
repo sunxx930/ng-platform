@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -49,6 +50,130 @@ def _download(url: str, dest: Path, *, resume: bool = False, timeout: int = 60,
                 fh.write(buf)
 
 
+# 随安装包内嵌的加密知识包（方案B：无服务器时靠它把税务库带下去）
+_BUNDLED_NAMES = ("kb.pack.enc",)
+
+
+def bundled_pack_path() -> Path | None:
+    """找随包内嵌的加密知识包。找不到返回 None。
+
+    搜索顺序（覆盖两种分发形态）：
+    1. NG_BUNDLED_PACK 环境变量（测试/调试用）
+    2. sys._MEIPASS —— PyInstaller 解包目录（mac 的 .app 内嵌走这条）
+    3. exe/app 同级目录 —— Windows 的 zip 里 exe 与包并排放（避免 onefile
+       每次启动都解 30MB 到临时目录）
+    4. 项目根 data/ —— 本地开发
+    """
+    cands: list[Path] = []
+    env = os.environ.get("NG_BUNDLED_PACK", "").strip()
+    if env:
+        cands.append(Path(env))
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        cands += [Path(meipass) / n for n in _BUNDLED_NAMES]
+    exe = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else None
+    if exe:
+        cands += [exe / n for n in _BUNDLED_NAMES]
+    cands += [Path(__file__).resolve().parent.parent.parent / "data" / n for n in _BUNDLED_NAMES]
+    for p in cands:
+        if p.is_file():
+            return p
+    return None
+
+
+def _install_blob(blob: bytes, knowledge_dir: Path, version: str) -> dict:
+    """把（已校验的）加密包解密并就地展开到 knowledge_dir。
+
+    解密需要授权里的包密钥；没有授权则只落密文，等激活后再解。
+    解压到临时目录再原子搬入，避免半截状态。
+    """
+    import io as _io
+    import os as _os
+    import re as _re
+    import shutil as _sh
+    import zipfile as _zip
+
+    enc_path = knowledge_dir / "kb.pack.enc"
+    enc_path.write_bytes(blob)
+
+    from app.services.license import pack_key
+    key = pack_key()
+    if not key:
+        return {"applied": True, "version": version, "reason": "已下载，待激活授权后解密"}
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    plain = AESGCM(key).decrypt(blob[:12], blob[12:], None)
+    tmp = Path(tempfile.mkdtemp(prefix=".kb-", dir=str(knowledge_dir)))
+    with _zip.ZipFile(_io.BytesIO(plain)) as zf:
+        for name in zf.namelist():
+            rel = name.replace("\\", "/").lstrip("/")
+            if not rel or ".." in rel.split("/") or ":" in rel:
+                continue
+            dst = (tmp / rel).resolve()
+            try:
+                dst.relative_to(tmp.resolve())
+            except ValueError:
+                continue
+            if name.endswith("/"):
+                dst.mkdir(parents=True, exist_ok=True)
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(zf.read(name))
+    for sub in ("tax-cases", "index", "models", "tax-regs"):
+        src = tmp / sub
+        if not src.is_dir():
+            continue
+        tgt = knowledge_dir / sub
+        old = knowledge_dir / (sub + ".old")
+        if tgt.exists():
+            _os.replace(tgt, old)
+        _os.replace(src, tgt)
+        _sh.rmtree(old, ignore_errors=True)
+    # 试用期起算（用户 2026-09-27 定，甲）：**法规库启用**这一刻才起算。
+    # 法规库 = 第二批法条，落在 tax-regs/（案例包不含该目录 → 装案例不烧试用期）。
+    regs_installed = (knowledge_dir / "tax-regs").is_dir()
+    if regs_installed:
+        try:
+            from app.services.license import note_use
+            note_use()
+        except Exception:      # noqa: BLE001
+            pass
+    _sh.rmtree(tmp, ignore_errors=True)
+    (knowledge_dir / "kb.pack.part").unlink(missing_ok=True)
+    (knowledge_dir / "version.json").write_text(
+        json.dumps({"version": version}, ensure_ascii=False), encoding="utf-8")
+    return {"applied": True, "version": version, "reason": "ok",
+            "regs": regs_installed}
+
+
+def install_bundled_pack(knowledge_dir: Path) -> dict:
+    """启用税务版：把**随安装包内嵌**的加密知识包展开到 knowledge_dir。
+
+    与 apply_knowledge_pack 的区别：不联网下载，包就在安装包里（无服务器的分发形态）。
+    没有授权（pack_key 为 None）时只落密文，等激活后再解。
+    """
+    knowledge_dir = Path(knowledge_dir)
+    knowledge_dir.mkdir(parents=True, exist_ok=True)
+    src = bundled_pack_path()
+    if not src:
+        return {"applied": False, "reason": "安装包里没有找到知识包", "source": None}
+
+    cur = knowledge_dir / "version.json"
+    version = "bundled"
+    if cur.exists():
+        try:
+            version = json.loads(cur.read_text(encoding="utf-8")).get("version") or version
+        except Exception:      # noqa: BLE001
+            pass
+
+    try:
+        blob = src.read_bytes()
+        out = _install_blob(blob, knowledge_dir, f"bundled-{version}" if version != "bundled" else "bundled")
+        out["source"] = str(src)
+        return out
+    except Exception as e:      # noqa: BLE001
+        return {"applied": False, "reason": f"失败: {e}", "source": str(src)}
+
+
 def apply_knowledge_pack(knowledge_dir: Path, *, keep_encrypted: bool = True) -> dict:
     """拉「知识包」并按需落地到 knowledge_dir。
 
@@ -86,52 +211,8 @@ def apply_knowledge_pack(knowledge_dir: Path, *, keep_encrypted: bool = True) ->
         if want and hashlib.sha256(blob).hexdigest() != want:
             return {"applied": False, "version": version,
                     "reason": "sha256 校验失败（已保留 .part 供续传）"}
-        enc_path = knowledge_dir / "kb.pack.enc"
-        enc_path.write_bytes(blob)
-
-        # 解密需要授权里的包密钥；没有授权则只落地密文，等激活后再解
-        import re as _re
-        from app.services.license import pack_key
-        key = pack_key()
-        if not key:
-            return {"applied": True, "version": version, "reason": "已下载，待激活授权后解密"}
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-        plain = AESGCM(key).decrypt(blob[:12], blob[12:], None)
-        import io as _io
-        import zipfile as _zip
-        # 解压到临时目录再原子搬入，避免半截状态
-        tmp = Path(tempfile.mkdtemp(prefix=".kb-", dir=str(knowledge_dir)))
-        with _zip.ZipFile(_io.BytesIO(plain)) as zf:
-            for name in zf.namelist():
-                rel = name.replace("\\", "/").lstrip("/")
-                if not rel or ".." in rel.split("/") or ":" in rel:
-                    continue
-                dst = (tmp / rel).resolve()
-                try:
-                    dst.relative_to(tmp.resolve())
-                except ValueError:
-                    continue
-                if name.endswith("/"):
-                    dst.mkdir(parents=True, exist_ok=True)
-                    continue
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                dst.write_bytes(zf.read(name))
-        for sub in ("tax-cases", "index", "models"):
-            src = tmp / sub
-            if not src.is_dir():
-                continue
-            tgt = knowledge_dir / sub
-            old = knowledge_dir / (sub + ".old")
-            if tgt.exists():
-                os.replace(tgt, old)
-            os.replace(src, tgt)
-            import shutil as _sh
-            _sh.rmtree(old, ignore_errors=True)
-        import shutil as _sh
-        _sh.rmtree(tmp, ignore_errors=True)
-        part.unlink(missing_ok=True)
-        cur.write_text(json.dumps({"version": version}, ensure_ascii=False), encoding="utf-8")
-        return {"applied": True, "version": version, "reason": "ok"}
+        # 解密 + 解压在 _install_blob（与内嵌包同一套逻辑，别再写第二份）
+        return _install_blob(blob, knowledge_dir, version)
     except Exception as e:  # noqa: BLE001
         return {"applied": False, "version": version, "reason": f"失败: {e}"}
 
