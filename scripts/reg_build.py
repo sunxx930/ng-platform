@@ -149,6 +149,18 @@ def title_topic(title: str) -> str:
     t = re.sub(r"[，,。；;]$", "", t).strip()
     return t if 3 <= len(t) <= 40 else ""
 
+def short_title(title: str) -> str:
+    """短标题：给文号消歧用（仅当同一文号被多份文件共用时）。
+
+    如「关于个人所得税征收管理若干问题的公告（2018年修正）」→「个人所得税征收管理」。
+    """
+    t = re.sub(r"[（(][^）)]*(修正|修订|废止|修改)[^）)]*[）)]", "", title or "")
+    t = re.sub(r"^(关于|印发|发布)", "", t)
+    t = re.sub(r"(有关)?(税收|税费)?(政策)?(问题)?的(公告|通知|批复|函|规定|办法|通告|实施细则)$", "", t)
+    t = re.sub(r"^(《|》)|(《|》)$", "", t).strip("《》 ")
+    return (t[:16] or (title or "")[:12])
+
+
 def _topic_covered(topic: str, subs: list[str]) -> bool:
     """标题事项是否已被某个主体覆盖（含包含关系，忽略标点）。"""
     def key(x: str) -> str:
@@ -635,6 +647,19 @@ def main() -> int:
         if i % 10 == 0:
             print(f"  {i}/{len(docs)}")
 
+    # ---- 文号消歧（用户 2026-09-28 方案A）----
+    # 同一文号可能被多份文件共用（实测：深圳「公告2018年第2号」被 10 份共用，
+    # 是 2018 年规范性文件批量修正时共用的公告号）。此时光有文号指不出唯一文件，
+    # 【公告2018年第2号 第三条】是歧义的。**只在重复处**补短标题，其余保持原样。
+    _counts = collections.Counter(d["doc_no"] for d in parsed)
+    for d in parsed:
+        if _counts[d["doc_no"]] > 1:
+            d["display_no"] = f"{d['doc_no']}·{short_title(d['doc_name'])}"
+            d["ambiguous"] = True
+        else:
+            d["display_no"] = d["doc_no"]
+            d["ambiguous"] = False
+
     # ---- 附件（表格/目录）：不参与条文层，但**单独留存**，不悄悄丢 ----
     annex_docs = [d for d in parsed if d["annex"].strip()]
     for d in annex_docs:
@@ -660,27 +685,27 @@ def main() -> int:
                 continue                     # 纯噪声行
             # 事件层：条文级主体 > 文件级主体 > 标题事项（通用政策文件）
             evs = r["subjects"] or d["subjects"] or []
-            body = line_of(r, d["doc_no"], subjects=evs)
+            body = line_of(r, d["display_no"], subjects=evs)
             if r["taxes"]:
                 for t in r["taxes"]:
                     for rule in r["rules"]:          # ← 一条可归入多个处理规则
-                        tax_rule[(t, rule)].append((d["doc_no"], body))
+                        tax_rule[(t, rule)].append((d["display_no"], body))
 
             else:
                 # 不涉税不等于"没归属"：有主体的条文已在事件层落了户（用户 2026-09-28：
                 # 程序要与实体在一起）。只有**税种和主体都没有**才算真待归类。
                 if not evs:
-                    unclassified.append((d["doc_no"], body, "税种与主体都未识别"))
+                    unclassified.append((d["display_no"], body, "税种与主体都未识别"))
                 else:
-                    no_tax.append((d["doc_no"], body))
+                    no_tax.append((d["display_no"], body))
             for s in evs:
-                by_event[s].append((d["doc_no"], r, body))
+                by_event[s].append((d["display_no"], r, body))
             # 待归类**只收真正没归属的**：已有税种分类的条文不算待归类，
             # 只是主体没识别出来 —— 单独统计，不混进待归类（否则报告误导）。
             if not r["taxes"] and not evs:
-                unclassified.append((d["doc_no"], body, "税种与主体都未识别"))
+                unclassified.append((d["display_no"], body, "税种与主体都未识别"))
             elif not evs:
-                no_subject.append((d["doc_no"], body))
+                no_subject.append((d["display_no"], body))
 
     # 写第 1 层
     for (t, rule), rows in sorted(tax_rule.items()):
@@ -738,7 +763,7 @@ def main() -> int:
     idx.append("| 文号 | 名称 | 条文 | 作废 | 事件 |")
     idx.append("|---|---|---|---|---|")
     for d in parsed:
-        idx.append(f"| {d['doc_no']} | {d['doc_name'][:28]} | {len(d['clauses'])} | "
+        idx.append(f"| {d['display_no']} | {d['doc_name'][:28]} | {len(d['clauses'])} | "
                    f"{d['dead_count']} | "
                    f"{'/'.join(d['subjects']) or '—'} |")
     if no_tax:
