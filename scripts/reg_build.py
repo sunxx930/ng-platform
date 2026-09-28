@@ -89,7 +89,12 @@ SUBJECTS = [
     ("兵器工业", ["兵器工业", "兵器装备"]),
     # 「公安」「司法」单独用会误伤（正文常出现「人民法院」等）——必须带"部门"
     ("公安司法", ["公安部门", "司法部门", "公安、司法", "公安部和司法部"]),
-    # —— 事项维度（强特征，正文里出现即算"讲这件事"）——
+]
+
+# 事项主体（强特征）：**可以认条文正文** —— 一条讲股权代持的条文，这份文件就是在讲它。
+# 与「单位/辖区」的区别：单位类绝不能用正文判（实测：深圳一份房产税 Q&A 里有一条讲
+# 「军队车船…免征车船使用税」，正文认「军队」就把整份错认成军队军工文件）。
+TOPIC_SUBJECTS = [
     ("股权代持", ["股权代持", "代持关系", "显名股东", "隐名股东"]),
     ("股权变更登记", ["股权变更登记", "股东变更登记"]),
 ]
@@ -104,9 +109,18 @@ LOCALITY_DIRS = {
 }
 
 
-def locality_hint(p: Path) -> str:
-    """从文件路径判辖区（如 …/深圳地方法规/xxx.pdf → 深圳市）。"""
-    for part in p.parts:
+def locality_hint(p: Path, title: str = "") -> str:
+    """判辖区。**文件名优先，目录次之**（目录取最深的那个）。
+
+    为什么文件名优先：省市目录是混排的 —— 实测「…/深圳地方法规/房产税…/1 广东省城镇土地
+    使用税实施细则.pdf」放在深圳目录下，但它是**广东省**的文件；只看目录会错标成深圳市。
+    目录取最深：越靠近文件的目录越具体。
+    """
+    for text in (title, p.name):
+        for k, v in LOCALITY_DIRS.items():
+            if k in text:
+                return v
+    for part in reversed(p.parts):          # 从最深的目录往上找
         for k, v in LOCALITY_DIRS.items():
             if k in part:
                 return v
@@ -478,8 +492,8 @@ def rules_of(text: str) -> list[str]:
     return hit or ["一般规定"]
 
 
-def subjects_of(blob: str) -> list[str]:
-    return [n for n, ws in SUBJECTS if any(w in blob for w in ws)]
+def subjects_of(blob: str, table=None) -> list[str]:
+    return [n for n, ws in (table or SUBJECTS) if any(w in blob for w in ws)]
 
 
 def parse_pdf(p: Path) -> dict:
@@ -509,8 +523,11 @@ def parse_pdf(p: Path) -> dict:
     # 通用政策文件（哪层都没命中）才退而用「标题事项」当事件名。
     # 主体：单位关键词（文件名+标题+正文，发文机关常只在正文）
     # + 辖区（只认文件名/标题/所在目录 —— 见 LOCALITY_DIRS 的说明）
-    subs = subjects_of(p.name + title + "\n" + body[:1500])
-    loc = locality_hint(p)
+    # 单位类：只认文件名+标题（正文绝不能用 —— 见 TOPIC_SUBJECTS 注释）
+    # 事项类：可认正文（一条讲股权代持的条文，这份文件就是在讲它）
+    subs = subjects_of(p.name + title) + subjects_of(p.name + title + "\n" + body[:1500],
+                                                   TOPIC_SUBJECTS)
+    loc = locality_hint(p, title)
     if loc and loc not in subs:
         subs = [loc] + subs
     for name, kws in TITLE_TOPICS:
@@ -544,7 +561,7 @@ def parse_pdf(p: Path) -> dict:
         if not r["taxes"] and doc_taxes:
             r["taxes"], r["tax_from_title"] = doc_taxes, True
         # 适用主体：条文里点名的优先，否则用文件层面的（这批是"特定单位"专用件）
-        r["subjects"] = subjects_of(r["text"]) or subs
+        r["subjects"] = subjects_of(r["text"], TOPIC_SUBJECTS) or subs
     # 事件 = 主体 + 事项，**两者都进**（用户 2026-09-28）。
     # 如「上海市…地方教育附加征收管理办法」既属事件「上海市」，也属「地方教育附加」，
     # 这样"某事项跨地区分别怎么规定"才查得到。通用全国文件没有主体，就只有事项。
@@ -601,6 +618,12 @@ def main() -> int:
     else:
         ap.error("需要 --src 或 --files")
     out = Path(a.out) / batch
+    # 批次是**整体重算**的：先清空该批次目录，否则上轮的产物会残留成过期文件
+    # （实测：改了主体判定后，旧运行留下的「军队军工.md」（92 条）仍在目录里，
+    #   看着像还在误判，实际是脏数据）。
+    if out.exists():
+        import shutil
+        shutil.rmtree(out)
     print(f"扫描 {len(docs)} 份 PDF …（{src_label}）→ 批次「{batch}」")
 
     parsed, errors = [], []
