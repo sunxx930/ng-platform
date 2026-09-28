@@ -12,3 +12,4 @@ anthropic==1.2.0
 # anthropic 1.2.0 走 httpx2/httpcore2（新包），与经典 httpx 共存，显式锁定保证可重建
 httpx2==2.12.0
 httpcore2==2.12.0
+pymupdf==1.28.2      # 法规 PDF 解析（正文抽取 + StrikeOut 批注识别）
