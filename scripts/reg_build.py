@@ -86,7 +86,22 @@ SUBJECTS = [
     ("农村信用社", ["农村信用社"]),
     ("西气东输", ["西气东输"]),
     ("兵器工业", ["兵器工业", "兵器装备"]),
-    ("公安司法", ["公安", "司法"]),
+    # 「公安」「司法」单独用会误伤（正文常出现「人民法院」等）——必须带"部门"
+    ("公安司法", ["公安部门", "司法部门", "公安、司法", "公安部和司法部"]),
+    # —— 地方文件（「2 地方相关法规」等）：主体即辖区 + 事项的两维，辖区单独成一类 ——
+    ("上海市", ["上海市税务局", "沪财发", "沪税", "上海市财政局", "上海市市场监督管理局"]),
+    ("厦门市", ["厦门市税务局", "厦税", "厦门市财政局"]),
+    ("北京市", ["北京市税务局", "京财税", "京税"]),
+    ("深圳市", ["深圳市税务局", "深税", "深圳市财政局"]),
+    ("苏州市", ["苏州市税务局", "苏税"]),
+    ("珠海市", ["珠海市税务局", "珠税"]),
+    ("广东省", ["广东省税务局", "粤税", "粤财"]),
+    ("横琴", ["横琴"]),
+    # —— 事项维度（一批文件因同一事项而聚）——
+    ("股权代持", ["股权代持", "代持关系", "显名股东", "隐名股东"]),
+    ("地方教育附加", ["地方教育附加"]),
+    ("增值税起征点", ["增值税起征点", "起征点"]),
+    ("股权变更登记", ["股权变更登记", "股东变更登记", "变更登记"]),
 ]
 
 _CLAUSE = re.compile(r"^([一二三四五六七八九十百]+、|\d+[．.]|[（(][一二三四五六七八九十]+[)）]|第[一二三四五六七八九十百零\d]+条)")
@@ -149,6 +164,37 @@ _RADICALS = {
 }
 
 
+# 「法律数据库导出件」形态（第三种）：开头是「标签：\n值」的元数据块
+_META_LABELS = ("发文机关", "发布日期", "生效日期", "失效日期", "时效性", "文号",
+                "相关法规", "法规文号", "效力状态")
+
+
+def split_meta_head(raw: str) -> tuple[dict, str]:
+    """剥离法律数据库导出件的元数据头，返回 (元数据, 正文)。
+
+    形态：`<标题>\\n发文机关：\\n值\\n发布日期：\\n值…`，随后正文里**标题与文号又各出现一次**。
+    元数据是公开发布信息（机关/日期/时效性），保留作文件级事实；
+    但**不参与分类**——分类一律从条文正文自析。
+    """
+    lines = [l.strip() for l in raw.splitlines() if l.strip()]
+    start = None
+    for i, s in enumerate(lines[:12]):
+        if s.rstrip("：:").strip() in _META_LABELS:
+            start = i
+            break
+    if start is None:
+        return {}, raw
+    meta, i = {}, start
+    while i < len(lines):
+        key = lines[i].rstrip("：:").strip()
+        if key in _META_LABELS and i + 1 < len(lines):
+            meta[key] = lines[i + 1]
+            i += 2
+        else:
+            break
+    return meta, "\n".join(lines[i:])
+
+
 def canonic(text: str) -> str:
     """NFKC 归一化 + 清洗网页复制噪声。
 
@@ -160,8 +206,19 @@ def canonic(text: str) -> str:
     text = unicodedata.normalize("NFKC", text)
     text = text.translate(str.maketrans(_RADICALS))          # ← 部首码位还原成正体汉字
     drop = re.compile(r"^(搜索|高级搜索|成文日期|字体|分享到|【?打印】?$|【?下载】?$|"
-                      r"发布日期|索引号|来源|字号|正文下载|相关文章)")
-    return "\n".join(l for l in text.splitlines() if not drop.match(l.strip()))
+                      r"发布日期|索引号|来源|字号|正文下载|相关文章|扫一扫|"
+                      r"page\s*\d+\s*of\s*\d+|第\s*\d+\s*页\s*共\s*\d+\s*页)")
+
+    def keep(l: str) -> bool:
+        s = l.strip()
+        # ⚠ 以冒号结尾的是**元数据标签行**（发文机关：/发布日期：/文号：…），
+        # 不是网页噪声。NFKC 会把全角「：」变半角「:」。此前误删了标签行，
+        # 导致整个元数据块解析中断、标签值被当条文。
+        if s.endswith((":", "：")):
+            return True
+        return not drop.match(s)
+
+    return "\n".join(l for l in text.splitlines() if keep(l))
 
 
 def strip_web_prefix(body: str) -> str:
@@ -174,7 +231,7 @@ def strip_web_prefix(body: str) -> str:
 
 
 _ANNEX = re.compile(r"^\s*(附件\s*\d|附\s*件\s*$|附表|免税目录|进口目录)")
-_CIRC = re.compile(r"^(.+?(?:\[[^\]]*\]第?\d+号|公告\s*\d{4}\s*年第\s*\d+\s*号))")
+_CIRC = re.compile(r"^(.+?(?:\[[^\]]*\]第?\d+号|(?:公告|通告|令)\s*\d{4}\s*年第?\s*\d+\s*号))")
 
 
 def split_annex(body: str) -> tuple[str, str]:
@@ -372,21 +429,29 @@ def parse_pdf(p: Path) -> dict:
     raw = canonic("\n".join(pg.get_text() for pg in doc))
     dead = strikeouts(doc)
     is_ey = "Part B" in raw and "Part A" in raw
+    meta_head, rest = split_meta_head(raw)       # 第三种形态：法律数据库导出件
     if is_ey:
         # EY 件只借它的 Part B（正文）；Part A 的元数据**弃用**——
         # 那是 EY 自己的分类口径，不是权威，且非 EY 件根本没有。
-        head, rest = raw.split("Part B", 1)
-        body = rest.split("Part C", 1)[0]
+        head, part_b = raw.split("Part B", 1)
+        body = part_b.split("Part C", 1)[0]
+    elif meta_head:
+        body = rest                              # 元数据头已剥离，正文里标题/文号还会再出现一次
     else:
         body = strip_web_prefix(raw)
     body = re.split(r"Date of Data|Data entered by|Data\s*reviewed by", body)[0]   # 去 Part C 尾巴
     circ = doc_no_from_name(p.stem)          # 文号一律取自文件名（你定的写法）
     title = p.stem[len(circ):].strip(" -_") or p.stem   # 名称 = 文件名去掉文号前缀
     main, annex = split_annex(body)
-    main = strip_header_lines(main, title, circ)         # 抬头/文号不进条文
     title_taxes = [t for t in TAXES if t in p.stem]      # 文件标题里点名的税种（官方名称）
     title_taxes += [v for k, v in TAX_ALIAS.items() if k in p.stem and v not in title_taxes]
-    recs = cut_clauses(clean_body(main))
+    merged = clean_body(main)                            # 先合并版面硬换行
+    # 抬头/文号要在**合并之后**剥：标题常被版心劈成两行（…完税凭证查验服 / 务工作的通告），
+    # 按行比对会失效；合并后标题才完整。
+    zone = min(3, len(merged))
+    merged = [x for x in (strip_header_lines(s, title, circ) for s in merged[:zone])
+              if x.strip()] + merged[zone:]
+    recs = cut_clauses(merged)
     for r in recs:
         r["status"] = status_of(r["text"], dead)
         r["taxes"], r["tax_from_title"] = taxes_of(r["text"], title_taxes)
@@ -404,7 +469,11 @@ def parse_pdf(p: Path) -> dict:
         r["subjects"] = subjects_of(r["text"]) or subjects_of(p.name)
     return {
         "file": p.name, "sha8": hashlib.sha256(p.read_bytes()).hexdigest()[:8],
-        "doc_no": circ, "doc_name": title, "ey": is_ey, "clauses": recs, "annex": annex,
+        "doc_no": circ, "doc_name": title, "ey": is_ey,
+        "issuer": meta_head.get("发文机关", ""),
+        "effective": meta_head.get("生效日期", ""),
+        "validity": meta_head.get("时效性", ""),
+        "clauses": recs, "annex": annex,
         "subjects": subjects_of(p.name + title),
         "dead_count": sum(1 for r in recs if r["status"] != "有效"),
     }
@@ -425,13 +494,26 @@ def line_of(r: dict, doc_no: str, subjects: list[str] | None = None) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", required=True)
+    ap.add_argument("--src", help="素材目录（递归取 *.pdf）")
+    ap.add_argument("--files", nargs="*", default=[], help="直接指定文件（给出时忽略 --src）")
     ap.add_argument("--out", default=str(Path.home() / "ng-regs"))
+    ap.add_argument("--batch", default="", help="批次名（默认取源目录名）。**每批独立存放，避免互相覆盖**；"
+                                                "最终跨批合并是单独一步")
     a = ap.parse_args()
 
-    src, out = Path(a.src), Path(a.out)
-    docs = sorted(p for p in src.rglob("*.pdf") if not p.name.startswith("._"))
-    print(f"扫描 {len(docs)} 份 PDF …")
+    if a.files:
+        docs = [Path(f) for f in a.files]
+        src_label = "、".join(p.parent.name for p in docs[:1])
+        batch = a.batch or (docs[0].parent.name if docs else "batch")
+    elif a.src:
+        src = Path(a.src)
+        src_label = str(src)
+        docs = sorted(p for p in src.rglob("*.pdf") if not p.name.startswith("._"))
+        batch = a.batch or src.name
+    else:
+        ap.error("需要 --src 或 --files")
+    out = Path(a.out) / batch
+    print(f"扫描 {len(docs)} 份 PDF …（{src_label}）→ 批次「{batch}」")
 
     parsed, errors = [], []
     for i, p in enumerate(docs, 1):
@@ -458,6 +540,7 @@ def main() -> int:
     by_event: dict[str, list] = collections.defaultdict(list)
     # ---- 待归类 ----
     unclassified = []
+    no_subject = []      # 有税种归属、仅主体未识别
 
     for d in parsed:
         for r in d["clauses"]:
@@ -471,11 +554,15 @@ def main() -> int:
 
             else:
                 unclassified.append((d["doc_no"], body, "条文未点名税种"))
-            # 事件层优先用条文级主体（这批是"特定单位"专用件，主体比税种更关键）
+            # 事件层优先用条文级主体（这些是"特定单位/特定事项"专用件，主体比税种更关键）
             for s in (r["subjects"] or d["subjects"]):
                 by_event[s].append((d["doc_no"], r, body))
-            if not r["subjects"] and not d["subjects"]:
-                unclassified.append((d["doc_no"], body, "未识别适用主体"))
+            # 待归类**只收真正没归属的**：已有税种分类的条文不算待归类，
+            # 只是主体没识别出来 —— 单独统计，不混进待归类（否则报告误导）。
+            if not r["taxes"] and not r["subjects"] and not d["subjects"]:
+                unclassified.append((d["doc_no"], body, "税种与主体都未识别"))
+            elif not r["subjects"] and not d["subjects"]:
+                no_subject.append((d["doc_no"], body))
 
     # 写第 1 层
     for (t, rule), rows in sorted(tax_rule.items()):
@@ -513,7 +600,7 @@ def main() -> int:
     total = sum(len(d["clauses"]) for d in parsed)
     dead = sum(d["dead_count"] for d in parsed)
     idx = [f"# 法规知识库索引\n",
-           f"> 生成 {datetime.date.today()} · 源目录 `{src}`\n",
+           f"> 生成 {datetime.date.today()} · 来源 {src_label}\n",
            f"| 项 | 值 |", f"|---|---|",
            f"| 法规文件 | {len(parsed)} 份（原生公文 {sum(1 for d in parsed if not d['ey'])} 份）|",
            f"| 条文本单元 | {total} 条 |",
@@ -528,6 +615,10 @@ def main() -> int:
     for d in parsed:
         idx.append(f"| {d['doc_no']} | {d['doc_name'][:28]} | {len(d['clauses'])} | "
                    f"{d['dead_count']} | {'/'.join(d['subjects']) or '—'} |")
+    if no_subject:
+        idx.append(f"\n## 主体未识别（{len(no_subject)} 条，已有税种归属）\n")
+        for no, body in no_subject[:40]:
+            idx.append(f"- {body[:100]}")
     if unclassified:
         idx.append(f"\n## 待归类（{len(unclassified)} 条）\n")
         for no, body, why in unclassified[:60]:
