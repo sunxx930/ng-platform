@@ -70,7 +70,8 @@ RULES = [
     ("税收优惠", ["优惠", "减半", "减征", "先征后退", "即征即退", "退税"]),
 ]
 
-# 事件主体（这批素材的目录就叫「特定单位相关法规」，故事件 = 主体 + 行为）
+# 主体：单位 / 辖区。特征强，**文件名、标题、正文都可认**
+# （发文机关常只在正文里出现，如文件名只有「关于…的通告」而正文写着「国家税务总局深圳市税务局」）
 SUBJECTS = [
     ("金融资产管理公司", ["资产公司", "资产管理公司", "信达", "华融", "长城资产", "东方资产"]),
     ("军队军工", ["军队", "军品", "军工", "军事", "保障性企业"]),
@@ -331,9 +332,26 @@ def strip_header_lines(body: str, title: str, circ: str) -> str:
     return "\n".join(out)
 
 
-def doc_no_from_name(stem: str) -> str:
+_SORT_PREFIX = re.compile(r"^\d+\s+")          # 文件名常带排序前缀，如「0 关于…的通告」
+
+
+def doc_no_from_name(stem: str, body: str = "") -> str:
+    """定文号。顺序：文件名 → 正文前几行 → **标题兜底**。
+
+    文号务必别取错：文件名开头的「0」「1」是**排序前缀**不是文号；
+    正文里的「（税总发[2021]14号）」是**引用别人**，也不是本文文号。
+    两者都要排除。真没有文号的公文（如深圳这份通告），只能拿标题当标识 —— 否则
+    每条条文会挂个「0」这种毫无意义的出处。
+    """
+    stem = _SORT_PREFIX.sub("", stem).strip()
     m = _CIRC.match(stem)
-    return m.group(1).strip() if m else stem.split(" ")[0]
+    if m:
+        return m.group(1).strip()
+    for line in (body or "").splitlines()[:6]:          # 正文开头的独立文号行
+        s = line.strip()
+        if _CIRC.match(s) and len(s) <= 30:
+            return _CIRC.match(s).group(1).strip()
+    return stem                                          # 无文号 → 标题即标识
 
 
 # 注：EY 导出件的 Part A 元数据（Type of Tax / Sub-Type / Topic / Issuing Body …）**已弃用**。
@@ -470,15 +488,16 @@ def parse_pdf(p: Path) -> dict:
     else:
         body = strip_web_prefix(raw)
     body = re.split(r"Date of Data|Data entered by|Data\s*reviewed by", body)[0]   # 去 Part C 尾巴
-    circ = doc_no_from_name(p.stem)          # 文号一律取自文件名（你定的写法）
-    title = p.stem[len(circ):].strip(" -_") or p.stem   # 名称 = 文件名去掉文号前缀
+    _stem = _SORT_PREFIX.sub("", p.stem).strip()        # 去排序前缀「0 」「1 」
+    circ = doc_no_from_name(p.stem, body)               # 文号：文件名 → 正文 → 标题兜底
+    title = _stem[len(circ):].strip(" -_") or _stem     # 名称 = 去掉文号前缀
     # 事件 = 主体 + 事项，**两者都进**（用户 2026-09-28）。必须在条文循环**之前**算好：
     # 条文的兜底主体要用这个合并结果，否则话题永远进不了事件层。
     # 事件两层（用户 2026-09-28「两个都进」）：
     #   ① 主体（单位/辖区）—— 关键词匹配文件名+标题
     #   ② 事项 —— 强特征词匹配正文；弱特征词**只认标题**
     # 通用政策文件（哪层都没命中）才退而用「标题事项」当事件名。
-    subs = subjects_of(p.name + title)
+    subs = subjects_of(p.name + title + "\n" + body[:1500])   # 主体：正文也算（发文机关常在正文）
     for name, kws in TITLE_TOPICS:
         if any(k in title for k in kws) and name not in subs:
             subs = subs + [name]
