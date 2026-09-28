@@ -90,10 +90,10 @@ SUBJECTS = [
     # 「公安」「司法」单独用会误伤（正文常出现「人民法院」等）——必须带"部门"
     ("公安司法", ["公安部门", "司法部门", "公安、司法", "公安部和司法部"]),
     # —— 地方文件（「2 地方相关法规」等）：主体即辖区 + 事项的两维，辖区单独成一类 ——
-    ("上海市", ["上海市税务局", "沪财发", "沪税", "上海市财政局", "上海市市场监督管理局"]),
-    ("厦门市", ["厦门市税务局", "厦税", "厦门市财政局"]),
-    ("北京市", ["北京市税务局", "京财税", "京税"]),
-    ("深圳市", ["深圳市税务局", "深税", "深圳市财政局"]),
+    ("上海市", ["上海市", "上海经济特区", "沪财发", "沪税", "上海市财政局"]),
+    ("厦门市", ["厦门市", "厦税", "厦门市财政局"]),
+    ("北京市", ["北京市", "京财税", "京税"]),
+    ("深圳市", ["深圳市", "深圳经济特区", "深税", "深圳市财政局"]),
     ("苏州市", ["苏州市税务局", "苏税"]),
     ("珠海市", ["珠海市税务局", "珠税"]),
     ("广东省", ["广东省税务局", "粤税", "粤财"]),
@@ -607,6 +607,7 @@ def main() -> int:
     # ---- 待归类 ----
     unclassified = []
     no_subject = []      # 有税种归属、仅主体未识别
+    no_tax = []          # 有主体归属、条文未涉税（如商事登记类程序条款）
 
     for d in parsed:
         for r in d["clauses"]:
@@ -621,7 +622,12 @@ def main() -> int:
                         tax_rule[(t, rule)].append((d["doc_no"], body))
 
             else:
-                unclassified.append((d["doc_no"], body, "条文未点名税种"))
+                # 不涉税不等于"没归属"：有主体的条文已在事件层落了户（用户 2026-09-28：
+                # 程序要与实体在一起）。只有**税种和主体都没有**才算真待归类。
+                if not evs:
+                    unclassified.append((d["doc_no"], body, "税种与主体都未识别"))
+                else:
+                    no_tax.append((d["doc_no"], body))
             for s in evs:
                 by_event[s].append((d["doc_no"], r, body))
             # 待归类**只收真正没归属的**：已有税种分类的条文不算待归类，
@@ -652,15 +658,22 @@ def main() -> int:
         lines = [f"# {subj}\n",
                  f"> 跨 {len(taxes)} 个税种：{' · '.join(taxes)}",
                  f"> 来自 {len({n for n, _, _ in rows})} 份法规，共 {len(rows)} 条条文\n"]
-        for t in taxes or ["（未识别税种）"]:
-            lines.append(f"\n## 【{t}】\n")
+        def _section(title: str, pred) -> None:
+            group = [(no, r, body) for no, r, body in rows if pred(r)]
+            if not group:
+                return
+            lines.append(f"\n## 【{title}】\n")
             cur_no = None
-            for no, r, body in rows:
-                if t not in r["taxes"]:
-                    continue
+            for no, r, body in group:
                 if no != cur_no:
                     lines.append(f"\n### {no}\n"); cur_no = no
                 lines.append(f"- {body}\n")
+
+        for t in taxes:
+            _section(t, lambda r, t=t: t in r["taxes"])
+        # 不涉税的条文（如商事登记类程序条款）也要落在这里 ——
+        # 否则事件文件头写着"共 N 条"，正文却少了一截，看着像丢了。
+        _section("未涉税（同属该主体的其他规定）", lambda r: not r["taxes"])
         f.write_text("\n".join(lines), encoding="utf-8")
 
     # ---- 索引 ----
@@ -683,6 +696,10 @@ def main() -> int:
         idx.append(f"| {d['doc_no']} | {d['doc_name'][:28]} | {len(d['clauses'])} | "
                    f"{d['dead_count']} | "
                    f"{'/'.join(d['subjects']) or '—'} |")
+    if no_tax:
+        idx.append(f"\n## 未涉税条文（{len(no_tax)} 条，已归入事件层）\n")
+        for no, body in no_tax[:30]:
+            idx.append(f"- {body[:100]}")
     if no_subject:
         idx.append(f"\n## 主体未识别（{len(no_subject)} 条，已有税种归属）\n")
         for no, body in no_subject[:40]:
