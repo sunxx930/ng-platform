@@ -97,12 +97,25 @@ SUBJECTS = [
     ("珠海市", ["珠海市税务局", "珠税"]),
     ("广东省", ["广东省税务局", "粤税", "粤财"]),
     ("横琴", ["横琴"]),
-    # —— 事项维度（一批文件因同一事项而聚）——
+    # —— 事项维度：只留"整份文件就是讲它"的强特征词。
+    # 刻意**不**收「地方教育附加」「教育费附加」这类：通用优惠公告常顺带提到它们
+    # （如六税一费公告），一提就命中会把文件错认成"关于地方教育附加"。
+    # 通用政策文件的"事项"改由**标题**推得（见 title_topic）。
     ("股权代持", ["股权代持", "代持关系", "显名股东", "隐名股东"]),
-    ("地方教育附加", ["地方教育附加"]),
-    ("增值税起征点", ["增值税起征点", "起征点"]),
-    ("股权变更登记", ["股权变更登记", "股东变更登记", "变更登记"]),
+    ("股权变更登记", ["股权变更登记", "股东变更登记"]),
 ]
+
+
+def title_topic(title: str) -> str:
+    """从标题里取出「事项」——仅在**主体识别不出**时用来给通用政策文件当事件名。
+
+    如「关于延续实施养老、托育、家政等社区家庭服务业税费优惠政策的公告」
+    → 「养老、托育、家政等社区家庭服务业税费优惠」。
+    """
+    t = re.sub(r"^关于(继续|延续)?(实施|执行)?", "", title or "")
+    t = re.sub(r"(有关)?(税收|税费)?(政策)?(问题)?的(公告|通知|批复|函|规定|办法|通告)$", "", t)
+    t = re.sub(r"[，,。；;]$", "", t).strip()
+    return t if 3 <= len(t) <= 40 else ""
 
 _CLAUSE = re.compile(r"^([一二三四五六七八九十百]+、|\d+[．.]|[（(][一二三四五六七八九十]+[)）]|第[一二三四五六七八九十百零\d]+条)")
 _SENT_END = re.compile(r"[。；：！？:；]$")
@@ -467,14 +480,20 @@ def parse_pdf(p: Path) -> dict:
             r["taxes"], r["tax_from_title"] = doc_taxes, True
         # 适用主体：条文里点名的优先，否则用文件层面的（这批是"特定单位"专用件）
         r["subjects"] = subjects_of(r["text"]) or subjects_of(p.name)
+    subs = subjects_of(p.name + title)
+    if not subs:                       # 通用政策文件（无特定主体）→ 用标题里的"事项"当事件
+        t = title_topic(title)
+        if t:
+            subs = [t]
     return {
         "file": p.name, "sha8": hashlib.sha256(p.read_bytes()).hexdigest()[:8],
         "doc_no": circ, "doc_name": title, "ey": is_ey,
+        "subjects_fallback": subs,
         "issuer": meta_head.get("发文机关", ""),
         "effective": meta_head.get("生效日期", ""),
         "validity": meta_head.get("时效性", ""),
         "clauses": recs, "annex": annex,
-        "subjects": subjects_of(p.name + title),
+        "subjects": subjects_of(p.name + title),      # 真主体（关键词），可能为空
         "dead_count": sum(1 for r in recs if r["status"] != "有效"),
     }
 
@@ -546,7 +565,9 @@ def main() -> int:
         for r in d["clauses"]:
             if not r["unit"] and len(r["text"]) < 12:
                 continue                     # 纯噪声行
-            body = line_of(r, d["doc_no"])
+            # 事件层：条文级主体 > 文件级主体 > 标题事项（通用政策文件）
+            evs = r["subjects"] or d["subjects"] or d.get("subjects_fallback") or []
+            body = line_of(r, d["doc_no"], subjects=evs)
             if r["taxes"]:
                 for t in r["taxes"]:
                     for rule in r["rules"]:          # ← 一条可归入多个处理规则
@@ -554,14 +575,13 @@ def main() -> int:
 
             else:
                 unclassified.append((d["doc_no"], body, "条文未点名税种"))
-            # 事件层优先用条文级主体（这些是"特定单位/特定事项"专用件，主体比税种更关键）
-            for s in (r["subjects"] or d["subjects"]):
+            for s in evs:
                 by_event[s].append((d["doc_no"], r, body))
             # 待归类**只收真正没归属的**：已有税种分类的条文不算待归类，
             # 只是主体没识别出来 —— 单独统计，不混进待归类（否则报告误导）。
-            if not r["taxes"] and not r["subjects"] and not d["subjects"]:
+            if not r["taxes"] and not evs:
                 unclassified.append((d["doc_no"], body, "税种与主体都未识别"))
-            elif not r["subjects"] and not d["subjects"]:
+            elif not evs:
                 no_subject.append((d["doc_no"], body))
 
     # 写第 1 层
@@ -614,7 +634,8 @@ def main() -> int:
     idx.append("|---|---|---|---|---|")
     for d in parsed:
         idx.append(f"| {d['doc_no']} | {d['doc_name'][:28]} | {len(d['clauses'])} | "
-                   f"{d['dead_count']} | {'/'.join(d['subjects']) or '—'} |")
+                   f"{d['dead_count']} | "
+                   f"{'/'.join(d['subjects'] or d.get('subjects_fallback') or []) or '—'} |")
     if no_subject:
         idx.append(f"\n## 主体未识别（{len(no_subject)} 条，已有税种归属）\n")
         for no, body in no_subject[:40]:
