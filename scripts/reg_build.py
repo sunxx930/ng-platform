@@ -577,12 +577,19 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", help="素材目录（递归取 *.pdf）")
     ap.add_argument("--files", nargs="*", default=[], help="直接指定文件（给出时忽略 --src）")
+    ap.add_argument("--files-from", default="", help="从文件读路径清单（每行一个）。"
+                                                     "**文件名常带空格，用这个而不是 shell 展开**")
     ap.add_argument("--out", default=str(Path.home() / "ng-regs"))
     ap.add_argument("--batch", default="", help="批次名（默认取源目录名）。**每批独立存放，避免互相覆盖**；"
                                                 "最终跨批合并是单独一步")
     a = ap.parse_args()
 
-    if a.files:
+    if a.files_from:
+        docs = [Path(x.strip()) for x in Path(a.files_from).read_text(encoding="utf-8").splitlines()
+                if x.strip() and not x.strip().startswith("#")]
+        src_label = f"清单 {Path(a.files_from).name}"
+        batch = a.batch or Path(a.files_from).stem
+    elif a.files:
         docs = [Path(f) for f in a.files]
         src_label = "、".join(p.parent.name for p in docs[:1])
         batch = a.batch or (docs[0].parent.name if docs else "batch")
