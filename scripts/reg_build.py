@@ -97,12 +97,19 @@ SUBJECTS = [
     ("珠海市", ["珠海市税务局", "珠税"]),
     ("广东省", ["广东省税务局", "粤税", "粤财"]),
     ("横琴", ["横琴"]),
-    # —— 事项维度：只留"整份文件就是讲它"的强特征词。
-    # 刻意**不**收「地方教育附加」「教育费附加」这类：通用优惠公告常顺带提到它们
-    # （如六税一费公告），一提就命中会把文件错认成"关于地方教育附加"。
-    # 通用政策文件的"事项"改由**标题**推得（见 title_topic）。
+    # —— 事项维度（强特征，正文里出现即算"讲这件事"）——
     ("股权代持", ["股权代持", "代持关系", "显名股东", "隐名股东"]),
     ("股权变更登记", ["股权变更登记", "股东变更登记"]),
+]
+
+# 事项维度（弱特征）：**只认标题**。
+# 「地方教育附加」这类词通用优惠公告正文里常顺带提到（如六税一费公告），
+# 拿正文判会把文件错认成"关于地方教育附加"（实测冒出过假事件）。
+# 但标题写了《…地方教育附加征收管理办法》的，就确实是讲它 —— 所以只匹配标题。
+TITLE_TOPICS = [
+    ("地方教育附加", ["地方教育附加"]),
+    ("教育费附加", ["教育费附加"]),
+    ("增值税起征点", ["增值税起征点", "起征点"]),
 ]
 
 
@@ -116,6 +123,16 @@ def title_topic(title: str) -> str:
     t = re.sub(r"(有关)?(税收|税费)?(政策)?(问题)?的(公告|通知|批复|函|规定|办法|通告)$", "", t)
     t = re.sub(r"[，,。；;]$", "", t).strip()
     return t if 3 <= len(t) <= 40 else ""
+
+def _topic_covered(topic: str, subs: list[str]) -> bool:
+    """标题事项是否已被某个主体覆盖（含包含关系，忽略标点）。"""
+    def key(x: str) -> str:
+        return re.sub(r"[^\w]", "", x or "")
+    t = key(topic)
+    if not t:
+        return True
+    return any(s and (key(s) in t or t in key(s)) for s in subs)
+
 
 _CLAUSE = re.compile(r"^([一二三四五六七八九十百]+、|\d+[．.]|[（(][一二三四五六七八九十]+[)）]|第[一二三四五六七八九十百零\d]+条)")
 _SENT_END = re.compile(r"[。；：！？:；]$")
@@ -455,6 +472,20 @@ def parse_pdf(p: Path) -> dict:
     body = re.split(r"Date of Data|Data entered by|Data\s*reviewed by", body)[0]   # 去 Part C 尾巴
     circ = doc_no_from_name(p.stem)          # 文号一律取自文件名（你定的写法）
     title = p.stem[len(circ):].strip(" -_") or p.stem   # 名称 = 文件名去掉文号前缀
+    # 事件 = 主体 + 事项，**两者都进**（用户 2026-09-28）。必须在条文循环**之前**算好：
+    # 条文的兜底主体要用这个合并结果，否则话题永远进不了事件层。
+    # 事件两层（用户 2026-09-28「两个都进」）：
+    #   ① 主体（单位/辖区）—— 关键词匹配文件名+标题
+    #   ② 事项 —— 强特征词匹配正文；弱特征词**只认标题**
+    # 通用政策文件（哪层都没命中）才退而用「标题事项」当事件名。
+    subs = subjects_of(p.name + title)
+    for name, kws in TITLE_TOPICS:
+        if any(k in title for k in kws) and name not in subs:
+            subs = subs + [name]
+    if not subs:
+        topic = title_topic(title)
+        if topic:
+            subs = [topic]
     main, annex = split_annex(body)
     title_taxes = [t for t in TAXES if t in p.stem]      # 文件标题里点名的税种（官方名称）
     title_taxes += [v for k, v in TAX_ALIAS.items() if k in p.stem and v not in title_taxes]
@@ -479,21 +510,18 @@ def parse_pdf(p: Path) -> dict:
         if not r["taxes"] and doc_taxes:
             r["taxes"], r["tax_from_title"] = doc_taxes, True
         # 适用主体：条文里点名的优先，否则用文件层面的（这批是"特定单位"专用件）
-        r["subjects"] = subjects_of(r["text"]) or subjects_of(p.name)
-    subs = subjects_of(p.name + title)
-    if not subs:                       # 通用政策文件（无特定主体）→ 用标题里的"事项"当事件
-        t = title_topic(title)
-        if t:
-            subs = [t]
+        r["subjects"] = subjects_of(r["text"]) or subs
+    # 事件 = 主体 + 事项，**两者都进**（用户 2026-09-28）。
+    # 如「上海市…地方教育附加征收管理办法」既属事件「上海市」，也属「地方教育附加」，
+    # 这样"某事项跨地区分别怎么规定"才查得到。通用全国文件没有主体，就只有事项。
     return {
         "file": p.name, "sha8": hashlib.sha256(p.read_bytes()).hexdigest()[:8],
         "doc_no": circ, "doc_name": title, "ey": is_ey,
-        "subjects_fallback": subs,
         "issuer": meta_head.get("发文机关", ""),
         "effective": meta_head.get("生效日期", ""),
         "validity": meta_head.get("时效性", ""),
         "clauses": recs, "annex": annex,
-        "subjects": subjects_of(p.name + title),      # 真主体（关键词），可能为空
+        "subjects": subs,     # 主体 + 事项合并（两者都进事件层）
         "dead_count": sum(1 for r in recs if r["status"] != "有效"),
     }
 
@@ -566,7 +594,7 @@ def main() -> int:
             if not r["unit"] and len(r["text"]) < 12:
                 continue                     # 纯噪声行
             # 事件层：条文级主体 > 文件级主体 > 标题事项（通用政策文件）
-            evs = r["subjects"] or d["subjects"] or d.get("subjects_fallback") or []
+            evs = r["subjects"] or d["subjects"] or []
             body = line_of(r, d["doc_no"], subjects=evs)
             if r["taxes"]:
                 for t in r["taxes"]:
@@ -635,7 +663,7 @@ def main() -> int:
     for d in parsed:
         idx.append(f"| {d['doc_no']} | {d['doc_name'][:28]} | {len(d['clauses'])} | "
                    f"{d['dead_count']} | "
-                   f"{'/'.join(d['subjects'] or d.get('subjects_fallback') or []) or '—'} |")
+                   f"{'/'.join(d['subjects']) or '—'} |")
     if no_subject:
         idx.append(f"\n## 主体未识别（{len(no_subject)} 条，已有税种归属）\n")
         for no, body in no_subject[:40]:
