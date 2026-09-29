@@ -330,13 +330,20 @@ def _body_after_metahead(raw: str) -> str:
 def split_annex(body: str) -> tuple[str, str]:
     """正文 / 附件分开。
 
-    附件常是大表格（如《消防救援装备进口免税目录》：序号/装备名称/税则号列/性能指标），
+    附件常是大**表格**（如《消防救援装备进口免税目录》：序号/装备名称/税则号列/性能指标），
     直接按行切会把每一格都当条文 —— 必须分出。**不丢弃**，单独留存。
+
+    ⚠ 但附件也可能是**带完整条文的政策文件**（实测《…促进生物医药产业集群高质量发展
+    的若干措施》等三个政策措施，就是通知的三个附件，里面有 一、~八、 和（三十二））。
+    那种不是表格、是真条文，切走就丢了一整份政策。**判据：附件里有没有条文标记**。
     """
     lines = body.splitlines()
     for i, l in enumerate(lines):
         if _ANNEX.match(l):
-            return "\n".join(lines[:i]), "\n".join(lines[i:])
+            tail = "\n".join(lines[i:])
+            if len(re.findall(r"(?:第[一二三四五六七八九十百零\d]+条|[一二三四五六七八九十百]+、)", tail)) >= 3:
+                return body, ""          # 附件其实是条文 → 不分离
+            return "\n".join(lines[:i]), tail
     return body, ""
 
 
