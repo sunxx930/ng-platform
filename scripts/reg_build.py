@@ -310,6 +310,20 @@ _BODY_START = re.compile(
     r"|根据《)")
 
 
+# EY 的 Part C 区块（录入日期/录入人/版权声明）
+_EY_PARTC = re.compile(r"Date of Data[\s\S]*?(?:internal use\s*only\.?|Proprietary[^\n]*|©[^\n]*)", re.S)
+
+
+def _drop_ey_partc(body: str) -> str:
+    """只去掉 EY 的 Part C 区块，**保留其后可能存在的附件正文**。
+
+    ⚠ 不能在 `body.split("Part C")[0]` 处硬切：实测《深圳市工业和信息化局技术创新项目
+    扶持计划操作规程》整份（78 条）就排在 Part C **之后** —— 硬切会把整份文件丢掉，
+    一份 18 页的规程只切出 4 条。
+    """
+    return _EY_PARTC.sub("", body)
+
+
 def _body_after_metahead(raw: str) -> str:
     """版面变体下找正文起点：跳过 EY 的元数据块。
 
@@ -548,7 +562,8 @@ def parse_pdf(p: Path) -> dict:
         # EY 件只借它的 Part B（正文）；Part A 的元数据**弃用**——
         # 那是 EY 自己的分类口径，不是权威，且非 EY 件根本没有。
         head, part_b = raw.split("Part B", 1)
-        body = part_b.split("Part C", 1)[0]
+        # 不在 "Part C" 处硬切 —— 附件正文可能排在它之后（见 _drop_ey_partc）
+        body = _drop_ey_partc(part_b)
         if len(body.strip()) < 200:
             # 版面变体：Part A/Part B 是**表单字段名、排在正文之后**（实测《深圳市地方金融
             # 监管局关于外商投资股权投资企业试点工作的补充通知》），照上面切会把正文全丢、
@@ -558,7 +573,6 @@ def parse_pdf(p: Path) -> dict:
         body = rest                              # 元数据头已剥离，正文里标题/文号还会再出现一次
     else:
         body = strip_web_prefix(raw)
-    body = re.split(r"Date of Data|Data entered by|Data\s*reviewed by", body)[0]   # 去 Part C 尾巴
     _stem = _SORT_PREFIX.sub("", p.stem).strip()        # 去排序前缀「0 」「1 」
     circ = doc_no_from_name(p.stem, body)               # 文号：文件名 → 正文 → 标题兜底
     title = _stem[len(circ):].strip(" -_") or _stem     # 名称 = 去掉文号前缀
