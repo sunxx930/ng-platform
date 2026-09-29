@@ -106,6 +106,8 @@ TOPIC_SUBJECTS = [
 LOCALITY_DIRS = {
     "深圳": "深圳市", "上海": "上海市", "北京": "北京市", "厦门": "厦门市",
     "苏州": "苏州市", "珠海": "珠海市", "广东": "广东省", "横琴": "横琴",
+    # 特殊经济区域（「3 前海、横琴、平潭、南沙、河套相关法规」）：各自独立成辖区
+    "前海": "前海", "平潭": "平潭", "南沙": "南沙", "河套": "河套",
 }
 
 
@@ -627,6 +629,15 @@ def parse_pdf(p: Path) -> dict:
         topic = title_topic(title)
         if topic:
             subs = [topic]
+    # 整份就是清单/目录的（标题以这些词结尾）：正文直接就是条目，没有任何内部标记
+    # 可识别（实测《平潭综合实验区产业发展指导目录》：正文开头就是「一、高技术产业」
+    # →「1.高清数字摄录机…」，标题只在 EY 元数据里）→ 整篇归附件，不产生条文。
+    if re.search(r"(目录|清单|一览表|汇总表|名单)$", title or ""):
+        return {"file": p.name, "sha8": hashlib.sha256(p.read_bytes()).hexdigest()[:8],
+                "doc_no": circ, "doc_name": title, "ey": is_ey,
+                "issuer": meta_head.get("发文机关", ""), "effective": meta_head.get("生效日期", ""),
+                "validity": meta_head.get("时效性", ""), "clauses": [], "annex": body,
+                "subjects": subs, "dead_count": 0}
     main, annex = split_annex(body)
     title_taxes = [t for t in TAXES if t in p.stem]      # 文件标题里点名的税种（官方名称）
     title_taxes += [v for k, v in TAX_ALIAS.items() if k in p.stem and v not in title_taxes]
