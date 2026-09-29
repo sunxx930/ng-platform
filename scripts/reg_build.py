@@ -372,22 +372,19 @@ _SORT_PREFIX = re.compile(r"^\d+\s+")          # 文件名常带排序前缀，�
 
 
 def doc_no_from_name(stem: str, body: str = "") -> str:
-    """定文号。顺序：文件名 → 正文前几行 → **标题兜底**。
+    """定文号：**文件名 → 标题兜底**。正文里的号一律不采信。
 
-    文号务必别取错：文件名开头的「0」「1」是**排序前缀**不是文号；
-    正文里的「（税总发[2021]14号）」是**引用别人**，也不是本文文号。
-    两者都要排除。真没有文号的公文（如深圳这份通告），只能拿标题当标识 —— 否则
-    每条条文会挂个「0」这种毫无意义的出处。
+    文号务必别取错：
+      - 文件名开头的「0」「1」是**排序前缀**，不是文号
+      - 正文里的号多是**引用别人**。实测《深圳市非营利组织免税资格申请指引》正文开头就写着
+        「（财税[2018]13号）」—— 那是它引用的文件，它自己并没有文号。此前拿正文兜底会
+        把标题也截成「申请指引」。**引用 ≠ 本文文号，所以正文一律不看**
+    真没有文号的（如上述申请指引、深圳综合申报通告），只能拿标题当标识 ——
+    否则每条会挂个「0」这种毫无意义的出处。
     """
     stem = _SORT_PREFIX.sub("", stem).strip()
     m = _CIRC.match(stem)
-    if m:
-        return m.group(1).strip()
-    for line in (body or "").splitlines()[:6]:          # 正文开头的独立文号行
-        s = line.strip()
-        if _CIRC.match(s) and len(s) <= 30:
-            return _CIRC.match(s).group(1).strip()
-    return stem                                          # 无文号 → 标题即标识
+    return m.group(1).strip() if m else stem
 
 
 # 注：EY 导出件的 Part A 元数据（Type of Tax / Sub-Type / Topic / Issuing Body …）**已弃用**。
