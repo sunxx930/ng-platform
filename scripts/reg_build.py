@@ -299,6 +299,11 @@ def strip_web_prefix(body: str) -> str:
 
 
 _ANNEX = re.compile(r"^\s*(附件\s*\d|附\s*件\s*$|附表|免税目录|进口目录)")
+# 表单/报表特征：附件是申报表、填写说明、清单时，里面的「一、二、」是填报说明不是条文
+# 只留**真表单**特征词。别用「金额」「序号」「纳税人名称」这类 —— 政策正文里也会出现
+# （实测《技术创新项目扶持计划操作规程》正文写着「资助金额」，用「金额」判会把整份规程误排除）
+_FORM_MARK = re.compile(r"填写说明|填报说明|申报表|申报附列资料|附列资料|税源明细表|"
+                        r"金额单位|纳税人识别号")
 _CIRC = re.compile(r"^(.+?(?:\[[^\]]*\]第?\d+号|(?:公告|通告|令)\s*\d{4}\s*年第?\s*\d+\s*号))")
 
 
@@ -355,8 +360,13 @@ def split_annex(body: str) -> tuple[str, str]:
     for i, l in enumerate(lines):
         if _ANNEX.match(l):
             tail = "\n".join(lines[i:])
+            # 附件里的 一、 可能是填报说明，不一定是条文 —— 先看有没有**表单特征**。
+            # 实测：同是"附件"，《…操作规程》（第X条体）要保留，
+            #       而《简并税费申报公告》的申报表填写说明（大量 一、）必须排除。
+            if _FORM_MARK.search(tail):
+                return "\n".join(lines[:i]), tail          # 表单/报告 → 排除
             if len(re.findall(r"(?:第[一二三四五六七八九十百零\d]+条|[一二三四五六七八九十百]+、)", tail)) >= 3:
-                return body, ""          # 附件其实是条文 → 不分离
+                return body, ""                            # 附件其实是政策条文 → 保留
             return "\n".join(lines[:i]), tail
     return body, ""
 
