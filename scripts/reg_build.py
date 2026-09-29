@@ -174,8 +174,9 @@ def _topic_covered(topic: str, subs: list[str]) -> bool:
 _CLAUSE = re.compile(r"^([一二三四五六七八九十百]+、|\d+[．.]|[（(][一二三四五六七八九十]+[)）]|第[一二三四五六七八九十百零\d]+条)")
 _SENT_END = re.compile(r"[。；：！？:；]$")
 _PAGENO = re.compile(r"^\d+$")
-_JUNK = ("Tax Law", "Information in this database", "Due to time constraint",
-         "Part A", "Part B", "Part C", "Proprietary and confidential")
+_JUNK = ("Tax Law", "TaxLaw", "Information in this database", "Due to time constraint",
+         "Part A", "Part B", "Part C", "Proprietary and confidential",
+         "Attachment", "Attachment List")
 
 _LABELS: list[str] = []      # EY 的 Part A 元数据已弃用（不是权威口径，且多数文件没有）
 _LBL: set[str] = set()
@@ -299,6 +300,31 @@ def strip_web_prefix(body: str) -> str:
 
 _ANNEX = re.compile(r"^\s*(附件\s*\d|附\s*件\s*$|附表|免税目录|进口目录)")
 _CIRC = re.compile(r"^(.+?(?:\[[^\]]*\]第?\d+号|(?:公告|通告|令)\s*\d{4}\s*年第?\s*\d+\s*号))")
+
+
+_BODY_START = re.compile(
+    r"^(?:各[一-龥、，]{2,20}[：:]$"                      # 发文对象：各相关单位：
+    r"|[一-龥]{2,12}(?:省|市|区|县|局|部|委员会|人民政府)[^\n]{0,20}[：:]$"
+    r"|第[一二三四五六七八九十百零\d]+条"
+    r"|一、"
+    r"|根据《)")
+
+
+def _body_after_metahead(raw: str) -> str:
+    """版面变体下找正文起点：跳过 EY 的元数据块。
+
+    元数据是「标签/取值」交替且**取值形态任意**（Published / 2022 / CTRE2022164 / 有效…），
+    没法靠"像不像值"来判。可靠的是**正文起点本身有特征**：发文对象（…：）、首条（一、/第X条）、
+    或「根据《…》」开篇。
+    """
+    lines = raw.splitlines()
+    for i, l in enumerate(lines):
+        s = l.strip()
+        if i < 6:                      # 开头几行是 EY 声明，不可能在这里
+            continue
+        if _BODY_START.match(s):
+            return "\n".join(lines[i:])
+    return raw                          # 认不出就整篇当正文（好过丢掉）
 
 
 def split_annex(body: str) -> tuple[str, str]:
@@ -516,6 +542,11 @@ def parse_pdf(p: Path) -> dict:
         # 那是 EY 自己的分类口径，不是权威，且非 EY 件根本没有。
         head, part_b = raw.split("Part B", 1)
         body = part_b.split("Part C", 1)[0]
+        if len(body.strip()) < 200:
+            # 版面变体：Part A/Part B 是**表单字段名、排在正文之后**（实测《深圳市地方金融
+            # 监管局关于外商投资股权投资企业试点工作的补充通知》），照上面切会把正文全丢、
+            # body 只剩「Attachment」。此时改用正文起点识别。
+            body = _body_after_metahead(raw)
     elif meta_head:
         body = rest                              # 元数据头已剥离，正文里标题/文号还会再出现一次
     else:
