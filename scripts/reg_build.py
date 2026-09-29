@@ -155,10 +155,13 @@ def short_title(title: str) -> str:
     如「关于个人所得税征收管理若干问题的公告（2018年修正）」→「个人所得税征收管理」。
     """
     t = re.sub(r"[（(][^）)]*(修正|修订|废止|修改)[^）)]*[）)]", "", title or "")
-    t = re.sub(r"^(关于|印发|发布)", "", t)
+    t = re.sub(r"^关于(继续|延续)?(实施|执行)?", "", t)
+    t = re.sub(r"^(印发|发布|修订印发)", "", t)          # 「关于发布《…》的公告」→ 去掉"发布"
     t = re.sub(r"(有关)?(税收|税费)?(政策)?(问题)?的(公告|通知|批复|函|规定|办法|通告|实施细则)$", "", t)
-    t = re.sub(r"^(《|》)|(《|》)$", "", t).strip("《》 ")
-    return (t[:16] or (title or "")[:12])
+    t = t.strip("《》 　")
+    if t.startswith("《"):                                # 标题整体被书名号包住
+        t = t[1:].split("》")[0] or t
+    return (t[:20] or (title or "")[:12])
 
 
 def _topic_covered(topic: str, subs: list[str]) -> bool:
