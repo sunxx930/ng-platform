@@ -306,7 +306,12 @@ def strip_web_prefix(body: str) -> str:
                   "", body, count=1, flags=re.S)
 
 
-_ANNEX = re.compile(r"^\s*(附件\s*\d|附\s*件\s*$|附表|免税目录|进口目录)")
+_ANNEX = re.compile(
+    r"^\s*(?:附件\s*\d|附\s*件\s*$|附表|免税目录|进口目录"
+    # 清单/目录/名单常**以自身标题起头**、不带「附件N」标记
+    # （实测《珠海市商事主体许可经营项目清单》：正文以「…清单」作小标题起，
+    #   里面 一、~十八、 + 1. 的编号被当成条文，一份通知虚增到 411 条）
+    r"|[^\n]{4,30}(?:清单|目录|一览表|汇总表|名单)\s*$)")
 # 表单/报表特征：附件是申报表、填写说明、清单时，里面的「一、二、」是填报说明不是条文
 # 只留**真表单**特征词。别用「金额」「序号」「纳税人名称」这类 —— 政策正文里也会出现
 # （实测《技术创新项目扶持计划操作规程》正文写着「资助金额」，用「金额」判会把整份规程误排除）
@@ -372,10 +377,16 @@ def split_annex(body: str) -> tuple[str, str]:
             # 实测：同是"附件"，《…操作规程》（第X条体）要保留，
             #       而《简并税费申报公告》的申报表填写说明（大量 一、）必须排除。
             if _FORM_MARK.search(tail):
-                return "\n".join(lines[:i]), tail          # 表单/报告 → 排除
-            if len(re.findall(r"(?:第[一二三四五六七八九十百零\d]+条|[一二三四五六七八九十百]+、)", tail)) >= 3:
-                return body, ""                            # 附件其实是政策条文 → 保留
-            return "\n".join(lines[:i]), tail
+                return "\n".join(lines[:i]), tail          # 表单/报表 → 排除
+            # 判「政策条文」还是「清单条目」：光看有没有 一、/第X条 不够 ——
+            # 清单也是 一、~十八、 编号（实测《…许可经营项目清单》），
+            # 但它的条目是**短条目**（「1.《中华人民共和国动物防疫法》」），
+            # 政策条文的每一段则是**整段**。按平均段长区分。
+            segs = [s for s in re.split(r"(?=第[一二三四五六七八九十百零\d]+条|[一二三四五六七八九十百]+、)", tail) if s.strip()]
+            avg = (sum(len(s) for s in segs) / len(segs)) if segs else 0
+            if len(segs) >= 3 and avg >= 60:
+                return body, ""                            # 段落像条文 → 保留
+            return "\n".join(lines[:i]), tail              # 短条目/清单 → 排除
     return body, ""
 
 
