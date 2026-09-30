@@ -365,6 +365,32 @@ def _body_after_metahead(raw: str) -> str:
     return raw                          # 认不出就整篇当正文（好过丢掉）
 
 
+# 附件常以「现将…公告/通知如下」起头，且**不在文首**（文首那次是本文的开场白）
+_ANNEX_OPENING = re.compile(r"现将[^\n]{0,25}(?:公告|通知|公布)如下")
+
+
+def split_annex_by_opening(body: str) -> tuple[str, str]:
+    """有些 PDF 把**另一份文件当附件**附在后面（用户 2026-09-29：「这是一个文件，
+    后面的是附件内容」）。
+
+    实测《关于横琴粤澳深度合作区有关管理体制的决定》后面跟着「现将执委会9个工作机构
+    职责公告如下：一、行政事务局职责…」——那是附件，不是本文条文。不分离的话，附件
+    条文会被冠上本文文号，**出处就是错的**（不只是歧义）。全库 166 份中 10 份有此形态。
+
+    判据：`现将…公告/通知如下` 出现在**文档 30% 之后**（文首那次是本文开场白，不算）。
+    """
+    m = None
+    for cand in _ANNEX_OPENING.finditer(body):
+        if cand.start() > max(300, len(body) * 0.3):
+            m = cand
+            break
+    if not m:
+        return body, ""
+    # 回退到该行行首，避免把前半句切碎
+    start = body.rfind("\n", 0, m.start()) + 1
+    return body[:start], body[start:]
+
+
 def split_annex(body: str) -> tuple[str, str]:
     """正文 / 附件分开。
 
@@ -642,7 +668,11 @@ def parse_pdf(p: Path) -> dict:
                 "issuer": meta_head.get("发文机关", ""), "effective": meta_head.get("生效日期", ""),
                 "validity": meta_head.get("时效性", ""), "clauses": [], "annex": body,
                 "subjects": subs, "dead_count": 0}
-    main, annex = split_annex(body)
+    # 先按「后段出现 现将…公告如下」切掉当成附件附上的另一份文件，再对主文档应用附件标记规则
+    main, annex = split_annex_by_opening(body)
+    m2, a2 = split_annex(main)
+    main = m2
+    annex = "\n".join(x for x in (a2, annex) if x.strip())
     title_taxes = [t for t in TAXES if t in p.stem]      # 文件标题里点名的税种（官方名称）
     title_taxes += [v for k, v in TAX_ALIAS.items() if k in p.stem and v not in title_taxes]
     merged = clean_body(main)                            # 先合并版面硬换行
