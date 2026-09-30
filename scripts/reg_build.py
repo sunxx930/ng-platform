@@ -844,6 +844,14 @@ def parse_pdf(p: Path) -> dict:
     loc = locality_hint(p, title, issuer)
     if loc and loc not in subs:
         subs = [loc] + subs
+    # 大湾区：与"市/省"不同，它是**跨市政策包**，可与属地**并列**（用户 2026-09-30：
+    # 「这批法规都是与大湾区有关 不是单纯的地方法规」→ 粤港澳大湾区与各市都进）。
+    # 判据用文件名/标题/发文机关/**所在目录** —— 实测《东财规[2021]1号》标题里没有
+    # "大湾区"（只在正文），但它在「4 大湾区相关法规」目录下。
+    if "粤港澳大湾区" not in subs and (
+            any("大湾区" in t for t in (title, p.name, issuer))
+            or any("大湾区" in part for part in p.parts)):
+        subs = subs + ["粤港澳大湾区"]
     for name, kws in TITLE_TOPICS:
         if any(k in title for k in kws) and name not in subs:
             subs = subs + [name]
