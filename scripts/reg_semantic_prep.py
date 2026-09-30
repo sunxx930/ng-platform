@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
 from pathlib import Path
@@ -53,7 +54,10 @@ def main() -> int:
             dst = DST / rel
             rows = clauses(src)
             if dst.exists():
-                continue               # 已做过的（如试点）跳过
+                # 已有产物：**内容没变就跳过**（省 LLM）；变了（新增批次/重新分类改动了
+                # 这个桶）才重做 —— 只比条文多重集，标题/分组照旧。
+                if collections.Counter(rows) == collections.Counter(clauses(dst)):
+                    continue
             if len(rows) <= a.threshold:
                 write_single(src, dst, rows)
                 small += 1
