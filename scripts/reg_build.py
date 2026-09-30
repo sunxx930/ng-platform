@@ -686,12 +686,13 @@ def parse_pdf(p: Path) -> dict:
     merged = [x for x in (strip_header_lines(s, title, circ) for s in merged[:zone])
               if x.strip()] + merged[zone:]
     recs = cut_clauses(merged)
-    # 附件本身是**文件**的（kind=="doc"）→ 一并收录，单元标成「附件 一」等
-    # （用户 2026-09-29：「附件是文件的也要收录，记为某某文件附件」）。
-    # 靠单元名带「附件」区分出处，避免与本文条号混淆。
+    # 附件本身是**文件**的（kind=="doc"）→ 一并收录，单元统一标成「附件」
+    # （用户 2026-09-29：「附件是文件的也要收录，记为某某文件附件」+「这个文件只有一个附件」）。
+    # **附件只标一次**：里面的「一、二、三」是附件内部的条目编号，本就写在正文里，
+    # 再拼进单元名会被读成"附件一、附件二…"（那是 N 个附件的意思）。
     if kind == "doc" and annex.strip():
         for r in cut_clauses(clean_body(annex)):
-            r["unit"] = f"附件 {r['unit']}".strip() if r["unit"] else "附件"
+            r["unit"] = "附件"
             recs.append(r)
     for r in recs:
         r["status"] = status_of(r["text"], dead)
