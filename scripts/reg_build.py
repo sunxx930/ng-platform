@@ -391,35 +391,35 @@ def split_annex_by_opening(body: str) -> tuple[str, str]:
     return body[:start], body[start:]
 
 
-def split_annex(body: str) -> tuple[str, str]:
-    """正文 / 附件分开。
+def _annex_kind(tail: str) -> str:
+    """附件是「文件」还是「表格/清单」。前者要收录成条文，后者只单独留存。"""
+    if _FORM_MARK.search(tail):
+        return "table"
+    segs = [s for s in re.split(r"(?=第[一二三四五六七八九十百零\d]+条|[一二三四五六七八九十百]+、)", tail) if s.strip()]
+    avg = (sum(len(s) for s in segs) / len(segs)) if segs else 0
+    return "doc" if (len(segs) >= 3 and avg >= 60) else "table"
 
-    附件常是大**表格**（如《消防救援装备进口免税目录》：序号/装备名称/税则号列/性能指标），
-    直接按行切会把每一格都当条文 —— 必须分出。**不丢弃**，单独留存。
 
-    ⚠ 但附件也可能是**带完整条文的政策文件**（实测《…促进生物医药产业集群高质量发展
-    的若干措施》等三个政策措施，就是通知的三个附件，里面有 一、~八、 和（三十二））。
-    那种不是表格、是真条文，切走就丢了一整份政策。**判据：附件里有没有条文标记**。
+def split_annex(body: str) -> tuple[str, str, str]:
+    """正文 / 附件分开。返回 (正文, 附件, 附件类型)；类型 doc / table / ""。
+
+    **附件也收录**（用户 2026-09-29：「附件是文件的也要收录，记为某某文件附件」），
+    按内容分两种：
+      · **doc**   —— 附件本身是**带条文的文件**（实测《…三个政策措施》《…操作规程》，
+                    以及附在《横琴管理体制决定》后的「执委会9个工作机构职责公告」）
+                    → 切条收录，单元标成「附件 一」等，出处可辨
+      · **table** —— 表格/清单/表单/申报表（免税目录、退税货物清单、申报表填写说明）
+                    → 只单独留存，不产条文（切了会产出几百条假条文）
+
+    判据（表格 vs 文件）：① 有表单特征词 → 表格；② 否则看**平均段长** ——
+    政策条文的每段是整段（≥60 字），清单条目是短条目（「1.《中华人民共和国动物防疫法》」）。
     """
     lines = body.splitlines()
     for i, l in enumerate(lines):
         if _ANNEX.match(l):
             tail = "\n".join(lines[i:])
-            # 附件里的 一、 可能是填报说明，不一定是条文 —— 先看有没有**表单特征**。
-            # 实测：同是"附件"，《…操作规程》（第X条体）要保留，
-            #       而《简并税费申报公告》的申报表填写说明（大量 一、）必须排除。
-            if _FORM_MARK.search(tail):
-                return "\n".join(lines[:i]), tail          # 表单/报表 → 排除
-            # 判「政策条文」还是「清单条目」：光看有没有 一、/第X条 不够 ——
-            # 清单也是 一、~十八、 编号（实测《…许可经营项目清单》），
-            # 但它的条目是**短条目**（「1.《中华人民共和国动物防疫法》」），
-            # 政策条文的每一段则是**整段**。按平均段长区分。
-            segs = [s for s in re.split(r"(?=第[一二三四五六七八九十百零\d]+条|[一二三四五六七八九十百]+、)", tail) if s.strip()]
-            avg = (sum(len(s) for s in segs) / len(segs)) if segs else 0
-            if len(segs) >= 3 and avg >= 60:
-                return body, ""                            # 段落像条文 → 保留
-            return "\n".join(lines[:i]), tail              # 短条目/清单 → 排除
-    return body, ""
+            return "\n".join(lines[:i]), tail, _annex_kind(tail)
+    return body, "", ""
 
 
 def strip_header_lines(body: str, title: str, circ: str) -> str:
@@ -667,12 +667,16 @@ def parse_pdf(p: Path) -> dict:
                 "doc_no": circ, "doc_name": title, "ey": is_ey,
                 "issuer": meta_head.get("发文机关", ""), "effective": meta_head.get("生效日期", ""),
                 "validity": meta_head.get("时效性", ""), "clauses": [], "annex": body,
+                "annex_kind": "table",          # 整份是目录 → 当表格留存
                 "subjects": subs, "dead_count": 0}
     # 先按「后段出现 现将…公告如下」切掉当成附件附上的另一份文件，再对主文档应用附件标记规则
-    main, annex = split_annex_by_opening(body)
-    m2, a2 = split_annex(main)
-    main = m2
-    annex = "\n".join(x for x in (a2, annex) if x.strip())
+    main, by_opening = split_annex_by_opening(body)
+    main, annex, kind = split_annex(main)
+    if by_opening.strip():
+        # 「现将…如下」后附的那份 —— 用户认定是本文附件，按其内容判是文件还是表格
+        annex = "\n".join(x for x in (annex, by_opening) if x.strip())
+        if kind != "table":
+            kind = _annex_kind(by_opening)
     title_taxes = [t for t in TAXES if t in p.stem]      # 文件标题里点名的税种（官方名称）
     title_taxes += [v for k, v in TAX_ALIAS.items() if k in p.stem and v not in title_taxes]
     merged = clean_body(main)                            # 先合并版面硬换行
@@ -682,6 +686,13 @@ def parse_pdf(p: Path) -> dict:
     merged = [x for x in (strip_header_lines(s, title, circ) for s in merged[:zone])
               if x.strip()] + merged[zone:]
     recs = cut_clauses(merged)
+    # 附件本身是**文件**的（kind=="doc"）→ 一并收录，单元标成「附件 一」等
+    # （用户 2026-09-29：「附件是文件的也要收录，记为某某文件附件」）。
+    # 靠单元名带「附件」区分出处，避免与本文条号混淆。
+    if kind == "doc" and annex.strip():
+        for r in cut_clauses(clean_body(annex)):
+            r["unit"] = f"附件 {r['unit']}".strip() if r["unit"] else "附件"
+            recs.append(r)
     for r in recs:
         r["status"] = status_of(r["text"], dead)
         r["taxes"], r["tax_from_title"] = taxes_of(r["text"], title_taxes)
@@ -706,7 +717,7 @@ def parse_pdf(p: Path) -> dict:
         "issuer": meta_head.get("发文机关", ""),
         "effective": meta_head.get("生效日期", ""),
         "validity": meta_head.get("时效性", ""),
-        "clauses": recs, "annex": annex,
+        "clauses": recs, "annex": annex, "annex_kind": kind,
         "subjects": subs,     # 主体 + 事项合并（两者都进事件层）
         "dead_count": sum(1 for r in recs if r["status"] != "有效"),
     }
@@ -784,7 +795,8 @@ def main() -> int:
             d["ambiguous"] = False
 
     # ---- 附件（表格/目录）：不参与条文层，但**单独留存**，不悄悄丢 ----
-    annex_docs = [d for d in parsed if d["annex"].strip()]
+    # 只有**表格/清单类**附件单独留存；文件类附件已并入条文（单元名带「附件 」）
+    annex_docs = [d for d in parsed if d["annex"].strip() and d.get("annex_kind") != "doc"]
     for d in annex_docs:
         f = out / "附件" / f"{d['doc_no']}.md"
         f.parent.mkdir(parents=True, exist_ok=True)
