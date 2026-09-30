@@ -604,6 +604,17 @@ def status_of(full_text: str, dead: list[str]) -> str:
     return "有效"
 
 
+# EY 数据库加的「（注：…）」交叉引用注。**它在列举别的文件名**，里面的税种不是本文的。
+# 实测《财税[2014]51号》（增值税/消费税）因注里写着「关于平潭营业税政策的通知，另请参阅…」
+# 被误归了「营业税」。全库 32 份带这类注。
+_ANNOT = re.compile(r"[（(]\s*注\s*[:：][^）)]{0,600}[）)]?", re.S)
+
+
+def strip_annot(text: str) -> str:
+    """去掉交叉引用注——**只用于判定，不改条文文本**（注里可能带「本文第X条已被废止」）。"""
+    return _ANNOT.sub("", text)
+
+
 def taxes_of(text: str, title_taxes: list[str]) -> tuple[list[str], bool]:
     """条文级税种。返回 (税种列表, 是否来自文件标题兜底)。
 
@@ -612,9 +623,12 @@ def taxes_of(text: str, title_taxes: list[str]) -> tuple[list[str], bool]:
        —— 标题是官方名称，不是 EY 的元数据。来源会标出，不静默编造。
     刻意**不用** EY 的 Type of Tax：那是 EY 内部口径，这批素材还很多不是 EY 件。
     """
-    hit = [t for t in TAXES if t in text]
+    # 判税种时先剥掉「（注：…）」交叉引用注 —— 那是**在列举别的文件名**，
+    # 里面的税种不是本文的（实测《财税[2014]51号》因注里提「平潭营业税政策」被误归营业税）。
+    scan = strip_annot(text)
+    hit = [t for t in TAXES if t in scan]
     for alias, std in TAX_ALIAS.items():          # 旧称也要认（如「土地使用税」=「城镇土地使用税」）
-        if alias in text and std not in hit:
+        if alias in scan and std not in hit:
             hit.append(std)
     if hit:
         return hit, False
