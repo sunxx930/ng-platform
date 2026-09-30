@@ -395,6 +395,13 @@ def _annex_kind(tail: str) -> str:
     """附件是「文件」还是「表格/清单」。前者要收录成条文，后者只单独留存。"""
     if _FORM_MARK.search(tail):
         return "table"
+    # **先看附件自己的标题**：写着「…指导目录 / …产业目录 / …清单 / …名单」的就是目录。
+    # 少了这条会把目录条目当条文收录（实测《横琴新区产业发展指导目录》211 条、
+    # 《横琴粤澳深度合作区鼓励类产业目录》199 条）—— 它们的条目够长（约 60 字），
+    # 光靠"平均段长"这个判据拦不住。
+    head = "\n".join(tail.splitlines()[:4])
+    if re.search(r"^\s*[^\n]{4,30}(?:目录|清单|一览表|汇总表|名单)\s*$", head, re.M):
+        return "table"
     segs = [s for s in re.split(r"(?=第[一二三四五六七八九十百零\d]+条|[一二三四五六七八九十百]+、)", tail) if s.strip()]
     avg = (sum(len(s) for s in segs) / len(segs)) if segs else 0
     return "doc" if (len(segs) >= 3 and avg >= 60) else "table"
