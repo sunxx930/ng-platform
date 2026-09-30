@@ -902,8 +902,14 @@ def parse_pdf(p: Path) -> dict:
     # 兜底第三层：发文对象/定义/程序这类条款本身不点税种，但它所属文件通篇讲哪些税，
     # 它就属于那些税 —— 不该被孤立到"待归类"（用户 2026-09-28：发文对象界定适用对象、
     # 定义解释概念、程序要与实体在一起）。
-    doc_taxes = [t for r in recs for t in r["taxes"]]
-    doc_taxes = list(dict.fromkeys(doc_taxes))
+    # ⚠ 但**不能**让"少数条文提到的税"污染整份文件 —— 实测《深圳经济特区城市更新条例》
+    #   里只有 2 条提到「契税」（产权置换免征），整份 99 条全被标成契税，整桶失真；
+    #   《消费税·收入》桶里一条消费税内容都没有，也是这么来的。
+    #   → 只有该税种在本文件里**占相当比例**（≥30% 的条文提到它）才外溢。
+    #   文件标题点名的税种已在 taxes_of 里兜底，不走这条。
+    n_rec = len(recs) or 1
+    doc_taxes = [t for t in dict.fromkeys(x for r in recs for x in r["taxes"])
+                 if sum(1 for r in recs if t in r["taxes"]) / n_rec >= 0.3]
     for r in recs:
         if not r["taxes"] and doc_taxes:
             r["taxes"], r["tax_from_title"] = doc_taxes, True
