@@ -474,11 +474,22 @@ def split_annex(body: str) -> tuple[str, str, str]:
     判据（表格 vs 文件）：① 有表单特征词 → 表格；② 否则看**平均段长** ——
     政策条文的每段是整段（≥60 字），清单条目是短条目（「1.《中华人民共和国动物防疫法》」）。
     """
+    # 「（注：…）」是 EY 的交叉引用注，注文里可能带「附表/附件/目录」等词，会被
+    # _ANNEX 当成附件起点 —— 实测《穗财规字[2021]1号》正文首句即
+    # 「（注：…参见财税[2019]31号文中 附表 。）」，整份《办法》因此被当成附件切掉，
+    # 一条正文不留。→ **落在注区间内的行不参与附件判定**。
+    note_spans = [m.span() for m in _ANNOT.finditer(body)]
+
+    def _in_note(pos: int) -> bool:
+        return any(a <= pos < b for a, b in note_spans)
+
     lines = body.splitlines()
+    off = 0
     for i, l in enumerate(lines):
-        if _ANNEX.match(l):
+        if not _in_note(off) and _ANNEX.match(l):
             tail = "\n".join(lines[i:])
             return "\n".join(lines[:i]), tail, _annex_kind(tail)
+        off += len(l) + 1
     return body, "", ""
 
 
