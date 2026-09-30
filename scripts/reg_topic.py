@@ -24,7 +24,9 @@ _CLAUSE = re.compile(r"^- 【")
 
 def iter_lines(root: Path, *, tax: str = "", event: str = ""):
     """产出 (批次, 相对来源, 行)。"""
-    for batch in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")):
+    # 跳过隐藏目录和 `_合并`（跨批次合并产物，扫它会与各批次重复计数）
+    for batch in sorted(p for p in root.iterdir()
+                        if p.is_dir() and not p.name.startswith((".", "_"))):
         dirs = []
         if tax:
             dirs.append(batch / "按税种规则" / tax)
