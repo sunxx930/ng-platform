@@ -33,3 +33,6 @@ dist-win/
 scripts/ocr
 scripts/pdftext
 scripts/pdfocr
+
+# 编译产物（由 ocr_mac.swift 自动构建）
+scripts/ocr_mac

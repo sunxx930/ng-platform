@@ -21,7 +21,10 @@ import collections
 import datetime
 import hashlib
 import json
+import os
 import re
+import subprocess
+import tempfile
 from pathlib import Path
 
 import pymupdf
@@ -109,20 +112,71 @@ TOPIC_SUBJECTS = [
 LOCALITY_DIRS = {
     # 特殊经济区域（「3 前海、横琴、平潭、南沙、河套相关法规」）：各自独立成辖区
     "河套": "河套", "横琴": "横琴", "前海": "前海", "平潭": "平潭", "南沙": "南沙",
-    # 城市 / 省
+    # 城市 / 省。⚠ **城市一律排在「广东」之前** —— 发文机关常写「广东省惠州市财政局」，
+    # 广东在前就会命中广东、把惠州市错标成广东省（2026-09-30 实测）。
     "深圳": "深圳市", "上海": "上海市", "北京": "北京市", "厦门": "厦门市",
-    "苏州": "苏州市", "珠海": "珠海市", "广东": "广东省",
+    "苏州": "苏州市", "珠海": "珠海市",
+    # 大湾区地市（2026-09-30 加）：这些文件标题/文件名多含_市名_，但词表里没有就落成
+    # "印发《…办法》"这类话题名。⚠ 只加**全称**——单字简称会误伤（「粤港澳」含「粤」，
+    # 加裸「粤」会把所有大湾区文件错标成广东省）。
+    "广州": "广州市", "东莞": "东莞市", "佛山": "佛山市", "惠州": "惠州市",
+    "江门": "江门市", "肇庆": "肇庆市", "中山": "中山市",
+    # 省：放最后（上面城市更具体）
+    "广东": "广东省",
 }
 
 
-def locality_hint(p: Path, title: str = "") -> str:
-    """判辖区。**文件名优先，目录次之**（目录取最深的那个）。
+def ey_issuer(head: str) -> str:
+    """从 EY Part A 里取**发文机关**（Issuing Body*）字段——多行值拼起来。
+
+    ⚠ 只认发文机关，**绝不认收文单位**：收文单位会列别的地区（LOCALITY_DIRS 的说明）。
+    发文机关是"这份文件是谁发的"，其名里的地区即该文件的辖区。
+    """
+    lines = [l.strip() for l in head.splitlines()]
+    labels = {"status", "title*", "access", "restriction", "issuing body*", "circular",
+              "coding", "year*", "circular number", "effectiveness *", "location*", "related",
+              "industry*", "language*", "effective", "date*", "date of", "suspension",
+              "announcement", "type of rule *", "tax rules", "type of tax", "sub-type of tax",
+              "topic", "daily update", "weekly express", "in-depth", "analysis", "others"}
+    for i, l in enumerate(lines):
+        if l.lower().startswith("issuing body"):
+            out = []
+            for x in lines[i + 1:]:
+                if not x:
+                    continue
+                if x.lower() in labels or x.lower().rstrip(":：") in labels:
+                    break
+                out.append(x)
+            return " ".join(out)
+    return ""
+
+
+def issuer_from_tail(body: str) -> str:
+    """非 EY 件：从**正文落款**取发文机关（日期行前 1-3 行里像机关名的）。
+
+    只作辖区判定的**兜底**信号，命中要含地区全称才有用；范围限定在末尾日期附近，
+    避开正文里提到的机关。
+    """
+    lines = [l.strip() for l in body.splitlines() if l.strip()]
+    for i in range(len(lines) - 1, -1, -1):
+        if re.fullmatch(r"\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日", lines[i]):
+            cand = [l for l in lines[max(0, i - 3):i]
+                    if re.search(r"(局|委|厅|部|政府|税务局|财政)", l)]
+            return " ".join(cand)
+    return ""
+
+
+def locality_hint(p: Path, title: str = "", issuer: str = "") -> str:
+    """判辖区。**文件名/标题优先，再次发文机关，目录最后**（目录取最深的那个）。
 
     为什么文件名优先：省市目录是混排的 —— 实测「…/深圳地方法规/房产税…/1 广东省城镇土地
     使用税实施细则.pdf」放在深圳目录下，但它是**广东省**的文件；只看目录会错标成深圳市。
     目录取最深：越靠近文件的目录越具体。
+    发文机关（issuer）排在目录之前：有些文件标题里没有市名（如「关于落实粤港澳大湾区
+    个人所得税优惠政策的通知」），但发文机关写着「深圳市人力资源和社会保障局」。
+    只有 issuer 里含**地区全称**时才命中，全国性文件（财政部/税务总局）不会误判。
     """
-    for text in (title, p.name):
+    for text in (title, p.name, issuer):
         for k, v in LOCALITY_DIRS.items():
             if k in text:
                 return v
@@ -287,6 +341,10 @@ def canonic(text: str) -> str:
     import unicodedata
     text = unicodedata.normalize("NFKC", text)
     text = text.translate(str.maketrans(_RADICALS))          # ← 部首码位还原成正体汉字
+    # 扫描件 OCR 带出的**页码碎片**（「—2—」「个- 1-人」这种版面页码被 OCR 当正文）；
+    # 夹在汉字中间的更常见，按行丢弃治不了，只能就地抹掉。真条文里几乎不出现「—数字—」。
+    text = re.sub(r"[—–－]\s*\d{1,4}\s*[—–－]", "", text)
+    text = re.sub(r"(?<=[一-鿿])\s*[-–－]\s*\d{1,3}\s*[-–－]\s*(?=[一-鿿])", "", text)
     # 税务网站页脚：从「纠错或建议」起是一整块站点模板（含"热门关键词:个人所得税增值税
     # 企业所得税…"这种热词串）。**不清掉会污染税种分类** —— 实测《财税[2026]39号》
     # （平潭增值税消费税退税）因此被误归了「企业所得税」。整库有 8 份带此页脚。
@@ -698,9 +756,56 @@ def subjects_of(blob: str, table=None) -> list[str]:
     return [n for n, ws in (table or SUBJECTS) if any(w in blob for w in ws)]
 
 
+# 扫描件 OCR：部分"法规"是**整页扫描图**（文字层为空），如《东财规[2021]1号》
+# 《佛财法[2021]8号》——《办法》正文全是图片，不 OCR 就一条都抽不出。
+# 用 macOS 自带的 Vision 框架（scripts/ocr_mac.swift，无需装 tesseract）。
+# 首次用时自动 swiftc 编出 scripts/ocr_mac（缺 swiftc / 非 mac 则静默跳过 OCR）。
+_OCR_BIN = Path(__file__).resolve().parent / "ocr_mac"
+_OCR_SRC = Path(__file__).resolve().parent / "ocr_mac.swift"
+_ocr_ready = None
+
+
+def _ensure_ocr() -> bool:
+    global _ocr_ready
+    if _ocr_ready is None:
+        _ocr_ready = False
+        if _OCR_BIN.exists():
+            _ocr_ready = True
+        elif _OCR_SRC.exists():
+            try:
+                subprocess.run(["swiftc", "-O", str(_OCR_SRC), "-o", str(_OCR_BIN)],
+                               capture_output=True, timeout=300)
+                _ocr_ready = _OCR_BIN.exists()
+            except Exception:
+                _ocr_ready = False
+    return _ocr_ready
+
+
+def page_text(pg) -> str:
+    """取一页文字；文字层近乎空的**扫描页** → 渲染成图后走 OCR（缺 OCR 工具则原样返回）。"""
+    t = pg.get_text()
+    if len(t.strip()) >= 30 or not pg.get_images() or not _ensure_ocr():
+        return t
+    tmp = ""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            tmp = f.name
+        pg.get_pixmap(dpi=300).save(tmp)
+        r = subprocess.run([str(_OCR_BIN), tmp], capture_output=True, text=True, timeout=120)
+        return r.stdout or t
+    except Exception:
+        return t
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
 def parse_pdf(p: Path) -> dict:
     doc = pymupdf.open(str(p))
-    raw = canonic("\n".join(pg.get_text() for pg in doc))
+    raw = canonic("\n".join(page_text(pg) for pg in doc))
     dead = strikeouts(doc)
     is_ey = "Part B" in raw and "Part A" in raw
     meta_head, rest = split_meta_head(raw)       # 第三种形态：法律数据库导出件
@@ -734,7 +839,9 @@ def parse_pdf(p: Path) -> dict:
     # 事项类：可认正文（一条讲股权代持的条文，这份文件就是在讲它）
     subs = subjects_of(p.name + title) + subjects_of(p.name + title + "\n" + body[:1500],
                                                    TOPIC_SUBJECTS)
-    loc = locality_hint(p, title)
+    # 发文机关：EY 件取 Part A 的 Issuing Body；否则从正文落款兜底
+    issuer = (ey_issuer(head) if is_ey else "") or issuer_from_tail(body)
+    loc = locality_hint(p, title, issuer)
     if loc and loc not in subs:
         subs = [loc] + subs
     for name, kws in TITLE_TOPICS:
