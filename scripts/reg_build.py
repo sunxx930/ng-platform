@@ -952,6 +952,10 @@ def main() -> int:
     ap.add_argument("--out", default=str(Path.home() / "ng-regs"))
     ap.add_argument("--batch", default="", help="批次名（默认取源目录名）。**每批独立存放，避免互相覆盖**；"
                                                 "最终跨批合并是单独一步")
+    ap.add_argument("--dump-clauses", default="", help="把待判条文导出成 JSONL（含稳定 id 与关键词候选），"
+                                                       "供语义判定；之后用 --classification 回填")
+    ap.add_argument("--classification", default="", help="语义判定结果 JSON（id → {taxes,rules,subjects}），"
+                                                         "覆盖关键词判定；没判到的条仍用关键词兜底")
     a = ap.parse_args()
 
     if a.files_from:
@@ -1000,6 +1004,33 @@ def main() -> int:
         else:
             d["display_no"] = d["doc_no"]
             d["ambiguous"] = False
+
+    # ---- 语义判定（提取 / 判定分离；用户 2026-09-30「所有层级分类都要看语义」）----
+    # 关键词判出来的 税种/规则/主体 只当**候选/兜底**；若给了 --classification，
+    # 以语义判定结果**覆盖**之。每条给稳定 id = <文件sha8>_<条文序号>，供 LLM 判定与回填。
+    for d in parsed:
+        for i, r in enumerate(d["clauses"]):
+            r["id"] = f"{d['sha8']}_{i}"
+    if a.classification:
+        cmap = json.loads(Path(a.classification).read_text(encoding="utf-8"))
+        for d in parsed:
+            for r in d["clauses"]:
+                c = cmap.get(r["id"])
+                if not c:
+                    continue                      # 没判到的仍用关键词兜底
+                for k in ("taxes", "rules", "subjects"):
+                    if k in c:
+                        r[k] = c[k]
+                r["semantic"] = True
+    if a.dump_clauses:
+        rows = [{"id": r["id"], "doc": d["display_no"], "doc_name": d["doc_name"],
+                 "unit": r["unit"], "text": r["text"], "status": r.get("status", ""),
+                 "kw_taxes": r["taxes"], "kw_rules": r["rules"], "kw_subjects": r["subjects"]}
+                for d in parsed for r in d["clauses"]
+                if r["unit"] or len(r["text"]) >= 12]
+        Path(a.dump_clauses).write_text(
+            "\n".join(json.dumps(x, ensure_ascii=False) for x in rows), encoding="utf-8")
+        print(f"  已导出待判条文 {len(rows)} 条 → {a.dump_clauses}")
 
     # ---- 附件（表格/目录）：不参与条文层，但**单独留存**，不悄悄丢 ----
     # 只有**表格/清单类**附件单独留存；文件类附件已并入条文（单元名带「附件 」）
