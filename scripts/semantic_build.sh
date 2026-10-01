@@ -19,19 +19,39 @@ BATCHES="$REGS/.batches"
 mkdir -p "$CLS"
 SRC_UNITS="/Volumes/LaCie/法规汇编/0 特定单位相关法规"
 
-# 该批次是否需要重建：没建过 → 需要；导出的条文里有还没判定的 id → 需要；否则跳过
+# 该批次是否需要重建：没建过 / 有未判定的 id / **判定内容变了**（哈希戳不符）→ 需要
 _need() {
-  [ -d "$REGS/$1" ] || return 0
   $PY - "$1" <<'PY'
-import json, os, sys
+import hashlib, json, os, sys
 b = sys.argv[1]; CLS = os.path.expanduser("~/ng-regs/.classify")
 d = f"{CLS}/{b}.jsonl"
-if not os.path.exists(d):
-    raise SystemExit(0)                                   # 没导出过 → 需要
-ids = {json.loads(l)["id"] for l in open(d, encoding="utf-8") if l.strip()}
+if not os.path.exists(d) or not os.path.isdir(os.path.expanduser(f"~/ng-regs/{b}")):
+    raise SystemExit(0)                                   # 没导出过 / 没建过 → 需要
+ids = [json.loads(l)["id"] for l in open(d, encoding="utf-8") if l.strip()]
 a = f"{CLS}/all-class.json"
-have = set(json.load(open(a, encoding="utf-8"))) if os.path.exists(a) else set()
-raise SystemExit(0 if (ids - have) else 1)                # 有未判条 → 需要
+have = json.load(open(a, encoding="utf-8")) if os.path.exists(a) else {}
+if any(i not in have for i in ids):
+    raise SystemExit(0)                                   # 有未判条 → 需要
+h = hashlib.sha1(json.dumps([(i, have[i]) for i in sorted(ids)],
+                            ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:12]
+mark = f"{CLS}/.built/{b}.hash"
+old = open(mark).read().strip() if os.path.exists(mark) else ""
+raise SystemExit(0 if h != old else 1)                    # 判定变了 → 需要
+PY
+}
+
+# 建完把该批次的判定哈希记下，供下次 _need 比对
+_stamp() {
+  $PY - "$1" <<'PY'
+import hashlib, json, os, sys
+b = sys.argv[1]; CLS = os.path.expanduser("~/ng-regs/.classify")
+os.makedirs(f"{CLS}/.built", exist_ok=True)
+d = f"{CLS}/{b}.jsonl"; a = f"{CLS}/all-class.json"
+ids = [json.loads(l)["id"] for l in open(d, encoding="utf-8") if l.strip()]
+have = json.load(open(a, encoding="utf-8")) if os.path.exists(a) else {}
+h = hashlib.sha1(json.dumps([(i, have.get(i)) for i in sorted(ids)],
+                            ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:12]
+open(f"{CLS}/.built/{b}.hash", "w").write(h)
 PY
 }
 
@@ -47,12 +67,14 @@ extract)
     case "$FORCE" in *" $b "*) : ;; *) _need "$b" || { echo "  跳过 $b（无新条文）"; continue; } ;; esac
     $PY scripts/reg_build.py --files-from "$L" --batch "$b" --out "$REGS" \
         --dump-clauses "$CLS/$b.jsonl" $CLASSARG 2>&1 | grep -E '条文|已导出' || true
+    _stamp "$b"
   done
   if [ -d "$SRC_UNITS" ]; then
     case "$FORCE" in *" 特定单位相关法规 "*) : ;; *) _need 特定单位相关法规 || n=skip ;; esac
     if [ "${n:-}" != skip ]; then
       $PY scripts/reg_build.py --src "$SRC_UNITS" --batch 特定单位相关法规 --out "$REGS" \
           --dump-clauses "$CLS/特定单位相关法规.jsonl" $CLASSARG 2>&1 | grep -E '条文|已导出' || true
+      _stamp 特定单位相关法规
     else
       echo "  跳过 特定单位相关法规（无新条文）"
     fi
