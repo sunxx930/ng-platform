@@ -133,8 +133,9 @@ collect)
   $PY - <<'PYEOF'
 import json, glob, os
 CLS = os.path.expanduser("~/ng-regs/.classify")
+files = sorted(glob.glob(f"{CLS}/chunks/class-*.json")) + sorted(glob.glob(f"{CLS}/class-*.json"))
 m = {}
-for f in sorted(glob.glob(f"{CLS}/chunks/class-*.json")) + sorted(glob.glob(f"{CLS}/class-*.json")):
+for f in files:
     m.update(json.load(open(f, encoding="utf-8")))
 out = f"{CLS}/all-class.json"
 if os.path.exists(out):                     # 已有判定里、这次没重判的要保留
@@ -145,7 +146,11 @@ if not m:
     print("✗ 没有找到任何 class-*.json，all-class.json 保持不变")
     raise SystemExit(1)
 json.dump(m, open(out, "w", encoding="utf-8"), ensure_ascii=False)
-print(f"✓ 合并判定 {len(m)} 条 → {out}")
+# ⚠ collect 后**删掉已合并的块文件**：否则旧批次的 class-*.json 会滞留，
+# 下一批 collect 时把**过时的判定**重新并回去、覆盖新值（实测踩过）。
+for f in files:
+    os.remove(f)
+print(f"✓ 合并判定 {len(m)} 条 → {out}（已清 {len(files)} 个块文件）")
 PYEOF
   ;;
 
