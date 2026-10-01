@@ -55,8 +55,9 @@ def collect_groups() -> list[dict]:
                         cur["sample"] = l[2:][:80]
             if cur:
                 out.append(cur)
-    for i, g in enumerate(out):
-        g["gid"] = i
+    for g in out:
+        # **稳定 id**：不能按位置编 —— 新批次加入组后位置会错位，旧映射就废了
+        g["sid"] = f"{g['tax']}|{g['rule']}|{g['title']}"
     return out
 
 
@@ -65,7 +66,7 @@ def cmd_collect() -> int:
     groups = collect_groups()
     by_tax: dict[str, list] = collections.defaultdict(list)
     for g in groups:
-        by_tax[g["tax"]].append({k: g[k] for k in ("gid", "rule", "title", "n", "sample")})
+        by_tax[g["tax"]].append({k: g[k] for k in ("sid", "rule", "title", "n", "sample")})
     big = {t: v for t, v in by_tax.items() if len(v) >= 25}
     small = {t: v for t, v in by_tax.items() if len(v) < 25}
     for t, v in big.items():
@@ -84,14 +85,15 @@ def cmd_collect() -> int:
 
 def cmd_apply() -> int:
     groups = collect_groups()
-    gid2g = {g["gid"]: g for g in groups}
-    mapping: dict[int, str] = {}                  # gid → "税种|主题"
+    gid2g = {g["sid"]: g for g in groups}
+    mapping: dict[str, str] = {}                  # sid → "税种|主题"
     for rf in sorted(TASKS.glob("result-*.json")):
         data = json.loads(rf.read_text(encoding="utf-8"))
         for tax, topics in data.items():
             for t in topics:
                 for gid in t["groups"]:
-                    mapping[gid] = f"{tax}|{t['主题']}"
+                    if gid in gid2g:
+                        mapping[gid] = f"{tax}|{t['主题']}"
     for gid in gid2g:                             # LLM 漏掉的 → 归「其他」，不丢
         mapping.setdefault(gid, f"{gid2g[gid]['tax']}|其他")
 
