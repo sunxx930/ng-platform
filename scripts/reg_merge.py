@@ -82,6 +82,11 @@ def main() -> int:
     if not root.is_dir():
         print(f"✗ 找不到法规库 {root}")
         return 1
+    # ⚠ 合并是**整体重算**：先清空输出目录，否则上轮的产物会残留成脏数据
+    # （实测：重新分类后「关税/收入.md」这种旧分类产物还留着，指向已不存在的桶）。
+    import shutil
+    if out_root.exists():
+        shutil.rmtree(out_root)
 
     index = ["# 全局库索引（跨批次合并）", ""]
     total_files = total_clauses = 0

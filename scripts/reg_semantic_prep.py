@@ -83,6 +83,17 @@ def main() -> int:
     if cur:
         batches.append(cur)
 
+    # 清掉「源已不存在」的孤儿产物（合并重算后旧分类的桶会消失）
+    pruned = 0
+    if DST.exists():
+        for dp, _, fs in os.walk(DST):
+            for f in fs:
+                if f.endswith(".md") and not (SRC / os.path.relpath(os.path.join(dp, f), DST)).exists():
+                    os.remove(os.path.join(dp, f))
+                    pruned += 1
+    if pruned:
+        print(f"清掉孤儿产物 {pruned} 个", flush=True)
+
     print(f"小文件(≤{a.threshold}条)已落盘: {small} 个", flush=True)
     print(f"大文件待处理: {big} 个 → {len(batches)} 批", flush=True)
     print(json.dumps(batches, ensure_ascii=False))
