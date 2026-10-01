@@ -1,47 +1,77 @@
 #!/bin/sh
 # 法规库「提取 / 判定分离」一键流程。
 #
-#   ./semantic_build.sh extract   提取所有批次（--dump-clauses 导出待判条文），
-#                                 若已有语义判定 all-class.json 则一并回填重建，再跨批合并
-#   ./semantic_build.sh chunk     把待判条文切成 ~165 条/块，交子代理判定
-#   ./semantic_build.sh collect   把各块的判定结果 class-*.json 合并成 all-class.json
+#   ./semantic_build.sh extract [批次名...]  提取批次（导出待判条文）+ 回填已有判定 + 跨批合并。
+#                                            **只跑"有新条文还没判定"或点名的批次**；
+#                                            判完的老批次直接跳过，不重解析 PDF。
+#   ./semantic_build.sh chunk                把待判条文切成 ~165 条/块，交子代理判定
+#   ./semantic_build.sh collect              把各块判定结果 class-*.json 合并成 all-class.json
+#   ./semantic_build.sh merge                 只重跑跨批合并（不重解析 PDF）
 #
-# 完整流程：extract → （我逐块做语义判定）→ collect → extract（再跑一次，回填）→ 完。
+# 完整流程：extract 新批次 → chunk →（逐块做语义判定）→ collect → extract 新批次（回填）→ 归组。
 set -e
+export LC_ALL=en_US.UTF-8 2>/dev/null || true   # macOS sh 默认 locale 下中文回显会乱码
 cd "$(dirname "$0")/.."                     # → ng-platform
 PY=.venv/bin/python
 REGS="$HOME/ng-regs"
 CLS="$REGS/.classify"                        # 待判条文 / 判定结果都放这
 BATCHES="$REGS/.batches"
 mkdir -p "$CLS"
+SRC_UNITS="/Volumes/LaCie/法规汇编/0 特定单位相关法规"
+
+# 该批次是否需要重建：没建过 → 需要；导出的条文里有还没判定的 id → 需要；否则跳过
+_need() {
+  [ -d "$REGS/$1" ] || return 0
+  $PY - "$1" <<'PY'
+import json, os, sys
+b = sys.argv[1]; CLS = os.path.expanduser("~/ng-regs/.classify")
+d = f"{CLS}/{b}.jsonl"
+if not os.path.exists(d):
+    raise SystemExit(0)                                   # 没导出过 → 需要
+ids = {json.loads(l)["id"] for l in open(d, encoding="utf-8") if l.strip()}
+a = f"{CLS}/all-class.json"
+have = set(json.load(open(a, encoding="utf-8"))) if os.path.exists(a) else set()
+raise SystemExit(0 if (ids - have) else 1)                # 有未判条 → 需要
+PY
+}
 
 cmd="${1:-}"
 case "$cmd" in
 extract)
-  # 有语义判定就回填（--classification），没有就只出关键词版 + 导出待判条文
+  shift 2>/dev/null || true
+  FORCE=" $* "
   CLASSARG=""
   [ -f "$CLS/all-class.json" ] && CLASSARG="--classification $CLS/all-class.json"
   for L in "$BATCHES"/*.list; do
     b=$(basename "$L" .list)
+    case "$FORCE" in *" $b "*) : ;; *) _need "$b" || { echo "  跳过 $b（无新条文）"; continue; } ;; esac
     $PY scripts/reg_build.py --files-from "$L" --batch "$b" --out "$REGS" \
         --dump-clauses "$CLS/$b.jsonl" $CLASSARG 2>&1 | grep -E '条文|已导出' || true
   done
-  SRC="/Volumes/LaCie/法规汇编/0 特定单位相关法规"
-  if [ -d "$SRC" ]; then
-    $PY scripts/reg_build.py --src "$SRC" --batch 特定单位相关法规 --out "$REGS" \
-        --dump-clauses "$CLS/特定单位相关法规.jsonl" $CLASSARG 2>&1 | grep -E '条文|已导出' || true
+  if [ -d "$SRC_UNITS" ]; then
+    case "$FORCE" in *" 特定单位相关法规 "*) : ;; *) _need 特定单位相关法规 || n=skip ;; esac
+    if [ "${n:-}" != skip ]; then
+      $PY scripts/reg_build.py --src "$SRC_UNITS" --batch 特定单位相关法规 --out "$REGS" \
+          --dump-clauses "$CLS/特定单位相关法规.jsonl" $CLASSARG 2>&1 | grep -E '条文|已导出' || true
+    else
+      echo "  跳过 特定单位相关法规（无新条文）"
+    fi
   fi
   $PY scripts/reg_merge.py
-  echo "✓ 提取+合并完成。待判条文在 $CLS/*.jsonl"
+  echo "✓ 提取+合并完成。待判条文在 $CLS/*.jsonl（用 chunk 切块）"
+  ;;
+
+merge)
+  $PY scripts/reg_merge.py
   ;;
 
 chunk)
   $PY - <<'PYEOF'
-import json, glob, os, shutil
+import json, glob, os
 CLS = os.path.expanduser("~/ng-regs/.classify")
 os.makedirs(f"{CLS}/chunks", exist_ok=True)
 rows = []
-for f in sorted(glob.glob(f"{CLS}/*.jsonl")):
+for f in sorted(glob.glob(f"{CLS}/*.jsonl")):        # 只扫批次导出文件，不扫子目录
     for l in open(f, encoding="utf-8"):
         l = l.strip()
         if l:
@@ -76,8 +106,7 @@ m = {}
 for f in sorted(glob.glob(f"{CLS}/chunks/class-*.json")) + sorted(glob.glob(f"{CLS}/class-*.json")):
     m.update(json.load(open(f, encoding="utf-8")))
 out = f"{CLS}/all-class.json"
-# 已有 all-class.json 里、这次没重判的条要保留（块可能只覆盖新增部分）
-if os.path.exists(out):
+if os.path.exists(out):                     # 已有判定里、这次没重判的要保留
     old = json.load(open(out, encoding="utf-8"))
     old.update(m)
     m = old
@@ -90,10 +119,11 @@ PYEOF
   ;;
 
 *)
-  echo "用法: $0 {extract|chunk|collect}"
-  echo "  extract  提取所有批次(+回填已有判定)+跨批合并"
+  echo "用法: $0 {extract [批次名...]|chunk|collect|merge}"
+  echo "  extract  提取「有新条文没判定」的批次(或点名的批次)+回填+跨批合并"
   echo "  chunk    切块交 LLM 判定"
   echo "  collect  合并各块判定结果"
+  echo "  merge    只重跑跨批合并"
   exit 1
   ;;
 esac
