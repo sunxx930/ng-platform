@@ -16,7 +16,36 @@ from __future__ import annotations
 import collections
 import json
 import os
+import re
 from pathlib import Path
+
+_TAG = re.compile(r"\s*「(?:已作废|部分作废)」")   # 含前导空格（line_of 里是" 「已作废」"）
+
+
+def reconcile_tags(src_lines: list[str], dst_path: Path) -> bool:
+    """语义产物里与某条源条文**只差「已作废」标签**的行，机械改成源行（不动分组）。
+
+    作废状态是机械后缀，没必要惊动 LLM。返回是否改动过。
+    """
+    dst_lines = dst_path.read_text(encoding="utf-8").split("\n")
+    pool: dict[str, list[int]] = collections.defaultdict(list)
+    for i, l in enumerate(dst_lines):
+        if l.startswith("- "):
+            pool[_TAG.sub("", l)].append(i)
+    used, changed = set(), False
+    for s in src_lines:
+        for i in pool.get(_TAG.sub("", s), []):
+            if i not in used and dst_lines[i] != s:
+                dst_lines[i] = s
+                used.add(i)
+                changed = True
+                break
+            if i not in used:
+                used.add(i)
+                break
+    if changed:
+        dst_path.write_text("\n".join(dst_lines), encoding="utf-8")
+    return changed
 
 REGS = Path.home() / "ng-regs"
 SRC = REGS / "_合并" / "按税种规则"
@@ -41,7 +70,9 @@ def main() -> int:
             dst = DST / rel
             if not dst.exists():
                 continue                       # 新桶：没旧产物，走原来的"整份归组"（prep 会挑出来）
-            a, b = collections.Counter(clauses(src)), collections.Counter(clauses(dst))
+            sl = clauses(src)
+            reconcile_tags(sl, dst)            # 先机械同步「已作废」类标签，剩下的才算真变动
+            a, b = collections.Counter(sl), collections.Counter(clauses(dst))
             if a == b:
                 continue                       # 没变
             new = list((a - b).elements())     # 源里有、产物里没有 → 要插入

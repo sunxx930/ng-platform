@@ -1022,6 +1022,13 @@ def main() -> int:
                     if k in c:
                         r[k] = c[k]
                 r["semantic"] = True
+    # 营业税**已废止**（2016-05-01 营改增全面推开）—— 涉营业税的条文一律标作废
+    # （用户 2026-10-01：「所有营业税都作废」）。放在判定回填之后，以最终税种为准。
+    for d in parsed:
+        for r in d["clauses"]:
+            if "营业税" in r["taxes"]:
+                r["status"] = "已作废"
+        d["dead_count"] = sum(1 for r in d["clauses"] if r["status"] != "有效")
     if a.dump_clauses:
         rows = [{"id": r["id"], "doc": d["display_no"], "doc_name": d["doc_name"],
                  "unit": r["unit"], "text": r["text"], "status": r.get("status", ""),
@@ -1121,7 +1128,8 @@ def main() -> int:
 
     # ---- 索引 ----
     total = sum(len(d["clauses"]) for d in parsed)
-    dead = sum(d["dead_count"] for d in parsed)
+    # 作废数按**最终状态**统计（批注 StrikeOut + 营业税等全局作废规则都算）
+    dead = sum(1 for d in parsed for r in d["clauses"] if r.get("status") in ("已作废", "部分作废"))
     idx = [f"# 法规知识库索引\n",
            f"> 生成 {datetime.date.today()} · 来源 {src_label}\n",
            f"| 项 | 值 |", f"|---|---|",

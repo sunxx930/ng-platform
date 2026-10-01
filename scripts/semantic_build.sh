@@ -64,19 +64,18 @@ extract)
   [ -f "$CLS/all-class.json" ] && CLASSARG="--classification $CLS/all-class.json"
   for L in "$BATCHES"/*.list; do
     b=$(basename "$L" .list)
-    case "$FORCE" in *" $b "*) : ;; *) _need "$b" || { echo "  跳过 $b（无新条文）"; continue; } ;; esac
+    case "$FORCE" in *" $b "*) : ;; *) [ -n "$FORCE_ALL" ] || { _need "$b" || continue; } ;; esac
     $PY scripts/reg_build.py --files-from "$L" --batch "$b" --out "$REGS" \
         --dump-clauses "$CLS/$b.jsonl" $CLASSARG 2>&1 | grep -E '条文|已导出' || true
     _stamp "$b"
   done
   if [ -d "$SRC_UNITS" ]; then
-    case "$FORCE" in *" 特定单位相关法规 "*) : ;; *) _need 特定单位相关法规 || n=skip ;; esac
+    case "$FORCE" in *" 特定单位相关法规 "*) n= ;; *) _need 特定单位相关法规 || n=skip ;; esac
+    [ -n "$FORCE_ALL" ] && n=
     if [ "${n:-}" != skip ]; then
       $PY scripts/reg_build.py --src "$SRC_UNITS" --batch 特定单位相关法规 --out "$REGS" \
           --dump-clauses "$CLS/特定单位相关法规.jsonl" $CLASSARG 2>&1 | grep -E '条文|已导出' || true
       _stamp 特定单位相关法规
-    else
-      echo "  跳过 特定单位相关法规（无新条文）"
     fi
   fi
   $PY scripts/reg_merge.py
