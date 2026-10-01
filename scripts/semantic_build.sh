@@ -65,6 +65,16 @@ merge)
   $PY scripts/reg_merge.py
   ;;
 
+regroup)
+  # 新桶（没旧产物）→ 整份归组的批；变动桶 → 增量小任务（只插新增条文）
+  $PY scripts/reg_semantic_prep.py --threshold 10 --cap 150
+  $PY scripts/reg_semantic_diff.py
+  ;;
+
+regroup-apply)
+  $PY scripts/reg_semantic_apply.py
+  ;;
+
 chunk)
   $PY - <<'PYEOF'
 import json, glob, os
@@ -119,11 +129,13 @@ PYEOF
   ;;
 
 *)
-  echo "用法: $0 {extract [批次名...]|chunk|collect|merge}"
-  echo "  extract  提取「有新条文没判定」的批次(或点名的批次)+回填+跨批合并"
-  echo "  chunk    切块交 LLM 判定"
-  echo "  collect  合并各块判定结果"
-  echo "  merge    只重跑跨批合并"
+  echo "用法: $0 {extract [批次名...]|chunk|collect|merge|regroup|regroup-apply}"
+  echo "  extract       提取「有新条文没判定」的批次(或点名的批次)+回填+跨批合并"
+  echo "  chunk         切块交 LLM 判定"
+  echo "  collect       合并各块判定结果"
+  echo "  merge         只重跑跨批合并"
+  echo "  regroup       出归组任务：新桶整份归组 / 变动桶增量任务(只插新条文)"
+  echo "  regroup-apply 套用增量归组结果并校验"
   exit 1
   ;;
 esac

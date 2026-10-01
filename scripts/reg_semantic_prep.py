@@ -54,10 +54,9 @@ def main() -> int:
             dst = DST / rel
             rows = clauses(src)
             if dst.exists():
-                # 已有产物：**内容没变就跳过**（省 LLM）；变了（新增批次/重新分类改动了
-                # 这个桶）才重做 —— 只比条文多重集，标题/分组照旧。
-                if collections.Counter(rows) == collections.Counter(clauses(dst)):
-                    continue
+                # 已有产物：内容没变 → 跳过；变了 → **留给 reg_semantic_diff 走增量**
+                # （只把新增条文插进旧分组，不整桶重读重写）。这里一律不重做。
+                continue
             if len(rows) <= a.threshold:
                 write_single(src, dst, rows)
                 small += 1
