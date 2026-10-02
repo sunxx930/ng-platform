@@ -642,9 +642,16 @@ def strikeouts(doc) -> list[str]:
             continue
         for a in pg.annots():
             if a.type[1] == "StrikeOut":
-                t = norm(pg.get_text("text", clip=a.rect))
-                if len(t) >= 3:
-                    out.append(t)
+                # 既要**合并串**（一条红线整条划掉时判"已作废"），又要**单行**（一条红线常同时
+                # 压住两三条，如 25号 的"三、…"+"四、…"，只有按行才与各条对得上、不整条匹配）。
+                txt = struck_text(pg, a.rect)
+                blob = norm(txt)
+                if len(blob) >= 3:
+                    out.append(blob)
+                for ln in txt.splitlines():
+                    t = norm(ln)
+                    if len(t) >= 3:
+                        out.append(t)
     return out
 
 
@@ -848,6 +855,59 @@ def page_text(pg) -> str:
         return r.stdout or t
     except Exception:
         return t
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _ocr_coords(img_path: str) -> list[tuple]:
+    """带坐标 OCR：每行 (x0,y0,x1,y1,text)，坐标归一化 0-1、原点左下。"""
+    try:
+        r = subprocess.run([str(_OCR_BIN), "--coords", img_path],
+                           capture_output=True, text=True, timeout=120)
+    except Exception:
+        return []
+    out = []
+    for line in (r.stdout or "").splitlines():
+        head, sep, txt = line.partition("\t")
+        if not sep:
+            continue
+        try:
+            x0, y0, x1, y1 = (float(v) for v in head.split())
+        except ValueError:
+            continue
+        out.append((x0, y0, x1, y1, txt))
+    return out
+
+
+def struck_text(pg, rect) -> str:
+    """批注矩形内的文字。
+
+    ⚠ **乱码页**不能用文本层（那层是坏的、取出来是乱码），须渲染成图 + 带坐标 OCR，
+    再取与该矩形相交的行。否则 StrikeOut 批注与 OCR 后的正文对不上、作废判不出
+    （实测《财政部 税务总局公告2020年第25号》两条红线全漏）。
+    """
+    raw = pg.get_text("text", clip=rect)
+    if not _is_garbled(pg.get_text()) or not _ensure_ocr():
+        return raw
+    W, H = pg.rect.width, pg.rect.height
+    tmp = ""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            tmp = f.name
+        pg.get_pixmap(dpi=300).save(tmp)
+        sel = []
+        for x0, y0, x1, y1, s in _ocr_coords(tmp):
+            lx0, lx1 = x0 * W, x1 * W                 # Vision 归一化(原点左下) → PDF 点(原点左上)
+            ty0, ty1 = (1 - y1) * H, (1 - y0) * H
+            if ty0 < rect.y1 and ty1 > rect.y0 and lx0 < rect.x1 and lx1 > rect.x0:
+                sel.append(s)
+        return "\n".join(sel) if sel else raw
+    except Exception:
+        return raw
     finally:
         if tmp:
             try:
