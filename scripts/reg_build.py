@@ -787,15 +787,20 @@ def _ensure_ocr() -> bool:
 
 
 def _is_garbled(t: str) -> bool:
-    """文字层**乱码**判据：正常字符（汉字/ASCII 可见/常用中文标点/全角）占比过低。
+    """文字层**乱码**判据。
 
-    部分 PDF 内嵌子集字体缺 ToUnicode 映射，抽出的是 `һиࣔڦॗ` 这类西里尔/天城文码位乱码
-    （实测《财政部 税务总局公告2020年第25号》631 字全乱码）。这种**字数够多**、过不了
-    "<30 字" 的 OCR 闸门，正文却不可读 —— 必须一并送去 OCR。
+    两类坏文本层（内嵌子集字体缺 ToUnicode 映射）：
+      1. 抽到西里尔/天城文码位乱码（《财税…2020年第25号》631 字）；
+      2. 更隐蔽的一种：**映射到合法但错误的字符**（`境外机构投䍺㘻境内䇷券`、Hangul`ㅢㄖᆇ`、
+         Coptic`ⲫ`、Sinhala`ඈ`、Bopomofo`ㄖ`…），按"非CJK占比"判会漏（《人民银行 外管局
+         公告2020年第2号》附件页）。
+    判据：**出现中文法律文书绝不可能有的外来脚本字符** → 乱码；或正常字符占比过低。
     """
     s = t.strip()
     if not s:
         return False
+    if _FOREIGN.search(s):
+        return True
     good = sum(1 for c in s if '一' <= c <= '鿿'
                or '＀' <= c <= '￯'                       # 全角
                or (c.isascii() and (c.isalnum() or c in " \n\t.,;:()[]{}%*-/+=&'\""))
@@ -803,10 +808,36 @@ def _is_garbled(t: str) -> bool:
     return good / len(s) < 0.6
 
 
+# 中文法律/税务文书里绝不可能出现的外来脚本（用来识别"映射到合法错字"的坏字体）
+_FOREIGN = re.compile(
+    "[֐-׿"      # 希伯来
+    "؀-ۿ"       # 阿拉伯
+    "܀-ݏݐ-ݿހ-޿"   # 叙利亚/阿拉伯补充/塔纳
+    "ऀ-෿"       # 天城文…僧伽罗（印度诸文字）
+    "฀-໿"       # 泰文/老挝
+    "ༀ-࿿"       # 藏文
+    "က-႟"       # 缅甸文
+    "Ⴀ-ჿⴀ-⴯"                # 乔治亚
+    "ᄀ-ᇿ㄰-㆏가-힯"   # 韩文（字母/兼容字母/音节）
+    "ሀ-፿"       # 埃塞俄比亚
+    "ក-៿"       # 高棉
+    "Ⲁ-⳿"       # 科普特
+    "㄀-ㄯ"       # 注音
+    "]")
+
+
+
 def page_text(pg) -> str:
-    """取一页文字；文字层近乎空**或乱码**的扫描页 → 渲染成图后走 OCR（缺 OCR 工具则原样返回）。"""
+    """取一页文字；文字层近乎空**或乱码**的页 → 渲染成图后走 OCR（缺 OCR 工具则原样返回）。
+
+    ⚠ 乱码页**不要求内嵌图** —— 字体坏掉的页文字层仍是"矢量文本"、没有图，
+    但它可以渲染成位图再 OCR（实测《人民银行 外管局公告2020年第2号》前 5 页乱码、其中 3 页无图）。
+    """
     t = pg.get_text()
-    if (len(t.strip()) >= 30 and not _is_garbled(t)) or not pg.get_images() or not _ensure_ocr():
+    if not _ensure_ocr():
+        return t
+    empty_scan = len(t.strip()) < 30 and bool(pg.get_images())
+    if not (empty_scan or _is_garbled(t)):
         return t
     tmp = ""
     try:
