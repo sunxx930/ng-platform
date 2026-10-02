@@ -21,9 +21,10 @@ SRC_UNITS="/Volumes/LaCie/法规汇编/0 特定单位相关法规"
 
 # 该批次是否需要重建：没建过 / 有未判定的 id / **判定内容变了**（哈希戳不符）→ 需要
 _need() {
-  $PY - "$1" <<'PY'
+  $PY - "$1" "$2" <<'PY'
 import hashlib, json, os, sys
-b = sys.argv[1]; CLS = os.path.expanduser("~/ng-regs/.classify")
+b = sys.argv[1]; src = sys.argv[2] if len(sys.argv) > 2 else ""
+CLS = os.path.expanduser("~/ng-regs/.classify")
 d = f"{CLS}/{b}.jsonl"
 if not os.path.exists(d) or not os.path.isdir(os.path.expanduser(f"~/ng-regs/{b}")):
     raise SystemExit(0)                                   # 没导出过 / 没建过 → 需要
@@ -32,24 +33,40 @@ a = f"{CLS}/all-class.json"
 have = json.load(open(a, encoding="utf-8")) if os.path.exists(a) else {}
 if any(i not in have for i in ids):
     raise SystemExit(0)                                   # 有未判条 → 需要
-h = hashlib.sha1(json.dumps([(i, have[i]) for i in sorted(ids)],
+# ⚠ **源清单本身变了也要重建** —— 往 .list 里追加文件时 id 会变，光看旧 dump 会漏
+sig = ""
+if src:
+    if os.path.isfile(src):
+        sig = hashlib.sha1(open(src, "rb").read()).hexdigest()
+    elif os.path.isdir(src):
+        names = sorted(n for n in os.listdir(src) if n.lower().endswith(".pdf") and not n.startswith("._"))
+        sig = hashlib.sha1("\n".join(names).encode()).hexdigest()
+h = hashlib.sha1(json.dumps([(i, have[i]) for i in sorted(ids)] + [sig],
                             ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:12]
 mark = f"{CLS}/.built/{b}.hash"
 old = open(mark).read().strip() if os.path.exists(mark) else ""
-raise SystemExit(0 if h != old else 1)                    # 判定变了 → 需要
+raise SystemExit(0 if h != old else 1)                    # 判定或源清单变了 → 需要
 PY
 }
 
-# 建完把该批次的判定哈希记下，供下次 _need 比对
+# 建完把该批次的判定+源清单哈希记下，供下次 _need 比对
 _stamp() {
-  $PY - "$1" <<'PY'
+  $PY - "$1" "$2" <<'PY'
 import hashlib, json, os, sys
-b = sys.argv[1]; CLS = os.path.expanduser("~/ng-regs/.classify")
+b = sys.argv[1]; src = sys.argv[2] if len(sys.argv) > 2 else ""
+CLS = os.path.expanduser("~/ng-regs/.classify")
 os.makedirs(f"{CLS}/.built", exist_ok=True)
 d = f"{CLS}/{b}.jsonl"; a = f"{CLS}/all-class.json"
 ids = [json.loads(l)["id"] for l in open(d, encoding="utf-8") if l.strip()]
 have = json.load(open(a, encoding="utf-8")) if os.path.exists(a) else {}
-h = hashlib.sha1(json.dumps([(i, have.get(i)) for i in sorted(ids)],
+sig = ""
+if src:
+    if os.path.isfile(src):
+        sig = hashlib.sha1(open(src, "rb").read()).hexdigest()
+    elif os.path.isdir(src):
+        names = sorted(n for n in os.listdir(src) if n.lower().endswith(".pdf") and not n.startswith("._"))
+        sig = hashlib.sha1("\n".join(names).encode()).hexdigest()
+h = hashlib.sha1(json.dumps([(i, have.get(i)) for i in sorted(ids)] + [sig],
                             ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:12]
 open(f"{CLS}/.built/{b}.hash", "w").write(h)
 PY
@@ -64,18 +81,18 @@ extract)
   [ -f "$CLS/all-class.json" ] && CLASSARG="--classification $CLS/all-class.json"
   for L in "$BATCHES"/*.list; do
     b=$(basename "$L" .list)
-    case "$FORCE" in *" $b "*) : ;; *) [ -n "$FORCE_ALL" ] || { _need "$b" || continue; } ;; esac
+    case "$FORCE" in *" $b "*) : ;; *) [ -n "$FORCE_ALL" ] || { _need "$b" "$L" || continue; } ;; esac
     $PY scripts/reg_build.py --files-from "$L" --batch "$b" --out "$REGS" \
         --dump-clauses "$CLS/$b.jsonl" $CLASSARG 2>&1 | grep -E '条文|已导出' || true
-    _stamp "$b"
+    _stamp "$b" "$L"
   done
   if [ -d "$SRC_UNITS" ]; then
-    case "$FORCE" in *" 特定单位相关法规 "*) n= ;; *) _need 特定单位相关法规 || n=skip ;; esac
+    case "$FORCE" in *" 特定单位相关法规 "*) n= ;; *) _need 特定单位相关法规 "$SRC_UNITS" || n=skip ;; esac
     [ -n "$FORCE_ALL" ] && n=
     if [ "${n:-}" != skip ]; then
       $PY scripts/reg_build.py --src "$SRC_UNITS" --batch 特定单位相关法规 --out "$REGS" \
           --dump-clauses "$CLS/特定单位相关法规.jsonl" $CLASSARG 2>&1 | grep -E '条文|已导出' || true
-      _stamp 特定单位相关法规
+      _stamp 特定单位相关法规 "$SRC_UNITS"
     fi
   fi
   $PY scripts/reg_merge.py
