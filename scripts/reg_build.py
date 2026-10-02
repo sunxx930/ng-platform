@@ -786,10 +786,27 @@ def _ensure_ocr() -> bool:
     return _ocr_ready
 
 
+def _is_garbled(t: str) -> bool:
+    """文字层**乱码**判据：正常字符（汉字/ASCII 可见/常用中文标点/全角）占比过低。
+
+    部分 PDF 内嵌子集字体缺 ToUnicode 映射，抽出的是 `һиࣔڦॗ` 这类西里尔/天城文码位乱码
+    （实测《财政部 税务总局公告2020年第25号》631 字全乱码）。这种**字数够多**、过不了
+    "<30 字" 的 OCR 闸门，正文却不可读 —— 必须一并送去 OCR。
+    """
+    s = t.strip()
+    if not s:
+        return False
+    good = sum(1 for c in s if '一' <= c <= '鿿'
+               or '＀' <= c <= '￯'                       # 全角
+               or (c.isascii() and (c.isalnum() or c in " \n\t.,;:()[]{}%*-/+=&'\""))
+               or c in "、。，；：（）《》〈〉「」“”‘’！？…—·【】％")
+    return good / len(s) < 0.6
+
+
 def page_text(pg) -> str:
-    """取一页文字；文字层近乎空的**扫描页** → 渲染成图后走 OCR（缺 OCR 工具则原样返回）。"""
+    """取一页文字；文字层近乎空**或乱码**的扫描页 → 渲染成图后走 OCR（缺 OCR 工具则原样返回）。"""
     t = pg.get_text()
-    if len(t.strip()) >= 30 or not pg.get_images() or not _ensure_ocr():
+    if (len(t.strip()) >= 30 and not _is_garbled(t)) or not pg.get_images() or not _ensure_ocr():
         return t
     tmp = ""
     try:
