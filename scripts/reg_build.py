@@ -714,11 +714,20 @@ def cut_clauses(segs: list[str]) -> list[dict]:
     return recs
 
 
+_TAIL_LINE = re.compile(r"[一-鿿]{2,20}\d{4}年\d{1,2}月\d{1,2}日$")
+
+
 def status_of(full_text: str, dead: list[str]) -> str:
     n = norm(full_text)
-    if any(d == n for d in dead):
+    # 条文尾常粘「发文机关+日期」落款（如 25号 四 尾粘"财政部 税务总局2020年5月13日"）。
+    # 红线划的是正文，落款不该把它从"已作废"降成"部分作废"。故同时拿"去落款"文本比。
+    n2 = _TAIL_LINE.sub("", n)
+    cands = (n,) if n2 == n else (n, n2)
+    # 已作废：整条被划（相等），或**整条落在某条红线的合并串里**（红线跨了该条的多个视觉行时，
+    # 逐行拆出的只是半截，但合并串里含完整该条 —— 如实测 25号 的"四"）。
+    if any(d == c or (len(c) >= 10 and c in d) for d in dead for c in cands):
         return "已作废"
-    if any(d in n for d in dead):
+    if any(d in c for d in dead for c in cands):
         return "部分作废"
     return "有效"
 
@@ -834,6 +843,16 @@ _FOREIGN = re.compile(
 
 
 
+_OCR_FIX = re.compile(r"(?:(?<=[。；：])|^)\s*一二[、，,]", re.M)
+
+
+def _ocr_fixups(s: str) -> str:
+    """修 Vision OCR 的顽固误读：把「三、」读成「一二、」（实测 25号，
+    300/450/600dpi 都一样）。只在**条号位置**（句末标点后或行首）才替换，
+    避免误伤正文里的「一二」。"""
+    return _OCR_FIX.sub("三、", s)
+
+
 def page_text(pg) -> str:
     """取一页文字；文字层近乎空**或乱码**的页 → 渲染成图后走 OCR（缺 OCR 工具则原样返回）。
 
@@ -852,7 +871,7 @@ def page_text(pg) -> str:
             tmp = f.name
         pg.get_pixmap(dpi=300).save(tmp)
         r = subprocess.run([str(_OCR_BIN), tmp], capture_output=True, text=True, timeout=120)
-        return r.stdout or t
+        return _ocr_fixups(r.stdout) or t
     except Exception:
         return t
     finally:
@@ -905,7 +924,7 @@ def struck_text(pg, rect) -> str:
             ty0, ty1 = (1 - y1) * H, (1 - y0) * H
             if ty0 < rect.y1 and ty1 > rect.y0 and lx0 < rect.x1 and lx1 > rect.x0:
                 sel.append(s)
-        return "\n".join(sel) if sel else raw
+        return _ocr_fixups("\n".join(sel)) if sel else raw
     except Exception:
         return raw
     finally:
