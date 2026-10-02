@@ -73,11 +73,15 @@ def main() -> int:
             sl = clauses(src)
             reconcile_tags(sl, dst)            # 先机械同步「已作废」类标签，剩下的才算真变动
             a, b = collections.Counter(sl), collections.Counter(clauses(dst))
+            name = rel.as_posix().replace("/", "__")[:-3]
             if a == b:
-                continue                       # 没变
+                # 没变：**清掉可能遗留的陈旧任务**。否则上一轮生成的 task.json 会滞留，
+                # 被误当成"本次任务"生成 result 再套用（实测把已归好的条文又插一遍、重复）。
+                (TASKS / f"{name}.task.json").unlink(missing_ok=True)
+                (TASKS / f"{name}.result.json").unlink(missing_ok=True)
+                continue
             new = list((a - b).elements())     # 源里有、产物里没有 → 要插入
             removed = list((b - a).elements())  # 产物里有、源里没有 → 要删除
-            name = rel.as_posix().replace("/", "__")[:-3]
             langs = [l[2:].strip() for l in dst.read_text(encoding="utf-8").splitlines()
                      if l.startswith("## ")]
             (TASKS / f"{name}.task.json").write_text(json.dumps(
