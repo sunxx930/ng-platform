@@ -108,12 +108,15 @@ def cmd_apply() -> int:
         tax, topic = key.split("|", 1)
         topic = re.sub(r"[/\\:*?\"<>|]", "·", topic).strip() or "其他"   # 主题名里可能有 / 等，净化成合法文件名
         lines = [f"# {tax} · {topic}", ""]
+        merged: dict[str, list[str]] = collections.OrderedDict()   # 同名组合并（组来自不同处理规则桶）
         for gid in sorted(buckets[key]):           # 保持原顺序（组内条文原样）
             g = gid2g[gid]
-            lines.append(f"## {g['title']}")
-            lines += g["lines"]
-            lines.append("")
+            merged.setdefault(g["title"], []).extend(g["lines"])
             total += len(g["lines"])
+        for title, body in merged.items():
+            lines.append(f"## {title}")
+            lines += body
+            lines.append("")
         d = DST / tax
         d.mkdir(parents=True, exist_ok=True)
         (d / f"{topic.strip() or '其他'}.md").write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
