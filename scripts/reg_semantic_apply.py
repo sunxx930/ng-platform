@@ -35,6 +35,17 @@ def apply_one(task: dict, result: dict) -> tuple[bool, str]:
 
     # 2) 插入：按组插到该组最后一条之后
     ins = result.get("insert", [])
+    # 先合并同类 insert（同一现有组 / 同一新建组标题）——否则同一新组标题被拆成
+    # 多个 ## 小节、标题重复（主题层按 sid 折叠时会丢条文，实测丢过 10 条）。
+    _merged, _pos = [], {}
+    for e in ins:
+        key = ("g", e["group"]) if "group" in e else ("ng", e["new_group"])
+        if key in _pos:
+            _merged[_pos[key]]["lines"].extend(e.get("lines", []))
+        else:
+            _pos[key] = len(_merged)
+            _merged.append(dict(e))
+    ins = _merged
     headings = [i for i, l in enumerate(lines) if l.startswith("## ")]
 
     def group_end(gidx: int) -> int:

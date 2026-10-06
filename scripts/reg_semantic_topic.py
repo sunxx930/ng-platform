@@ -122,6 +122,28 @@ def cmd_apply() -> int:
         (d / f"{topic.strip() or '其他'}.md").write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
         made += 1
     print(f"✓ 生成 {made} 个主题文件 / {total} 条 → {DST}")
+    # 写索引 _合并_语义/_索引.md（此前无生成器，手工维护易过期）
+    tax_rows: dict[str, list] = {}
+    for tax in sorted(os.listdir(DST)):
+        td = DST / tax
+        if not td.is_dir():
+            continue
+        rows = []
+        for f in sorted(td.glob("*.md")):
+            ls = f.read_text(encoding="utf-8").splitlines()
+            rows.append((f.stem, sum(1 for l in ls if l.startswith("## ")),
+                         sum(1 for l in ls if l.startswith("- "))))
+        tax_rows[tax] = rows
+    flat = [r for rs in tax_rows.values() for r in rs]
+    nfile, nline, ngrp = len(flat), sum(r[2] for r in flat), sum(r[1] for r in flat)
+    out = ["# 语义归组库索引", "",
+           f"共 **{nfile}** 个主题文件 / **{nline}** 条 / **{ngrp}** 个语义组", ""]
+    for tax in sorted(tax_rows, key=lambda t: -sum(r[2] for r in tax_rows[t])):
+        out.append(f"## {tax}")
+        for name, g, n in sorted(tax_rows[tax], key=lambda x: -x[2]):
+            out.append(f"- {name} —— {g} 组 / {n} 条")
+        out.append("")
+    (REGS / "_合并_语义" / "_索引.md").write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
     # 校验：条文总数应与旧层一致
     old = sum(g["n"] for g in groups)
     print(f"  旧层条文 {old}，新层条文 {total}" + ("（一致）" if old == total else "  ✗ 不一致！"))
