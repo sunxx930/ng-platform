@@ -82,6 +82,9 @@ def main() -> int:
         bad += (not good)
         if good:
             rf.unlink()
+            # ⚠ 成功套用后也要删 task.json：否则它滞留成「陈旧任务」，
+            # 若下次跳过 diff 直接照它生成 result 再 apply，会把同一批条文又插一遍。
+            (TASKS / rf.name.replace(".result.json", ".task.json")).unlink(missing_ok=True)
     print(f"套用完成：成功 {ok} / 失败 {bad}")
     return 1 if bad else 0
 
