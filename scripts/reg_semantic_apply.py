@@ -62,7 +62,18 @@ def apply_one(task: dict, result: dict) -> tuple[bool, str]:
         lines[pos:pos] = list(e["lines"])
 
     for e in [x for x in ins if "new_group" in x]:
-        lines += ["", f"## {e['new_group']}"] + list(e["lines"])
+        t = e["new_group"].strip()
+        hs = [i for i, l in enumerate(lines) if l.startswith("## ")]
+        hi = next((i for i in hs if lines[i][3:].strip() == t), None)
+        if hi is not None:
+            # 桶里**已有同名组**（如条文从别的规则桶挪进本桶，而本桶早已有该文号组）→
+            # 追加到该组末尾，别再新建一个同名 `##` 小节（否则 sid 重复、主题层折叠时丢条文）
+            end = next((j for j in hs if j > hi), len(lines))
+            while end > hi + 1 and lines[end - 1] == "":
+                end -= 1
+            lines[end:end] = list(e["lines"])
+        else:
+            lines += ["", f"## {t}"] + list(e["lines"])
 
     out = "\n".join(lines)
     if not out.endswith("\n"):
