@@ -44,7 +44,7 @@ def collect_groups() -> list[dict]:
             cur = None
             for l in f.read_text(encoding="utf-8", errors="replace").splitlines():
                 if l.startswith("## "):
-                    if cur:
+                    if cur and cur["n"]:        # 跳过无条文的空组（剪剩的 `## 标题`）
                         out.append(cur)
                     cur = {"tax": tax, "rule": f.stem, "title": l[3:].strip(),
                            "n": 0, "sample": "", "lines": []}
@@ -53,7 +53,7 @@ def collect_groups() -> list[dict]:
                     cur["lines"].append(l)
                     if not cur["sample"]:
                         cur["sample"] = l[2:][:80]
-            if cur:
+            if cur and cur["n"]:
                 out.append(cur)
     for g in out:
         # **稳定 id**：不能按位置编 —— 新批次加入组后位置会错位，旧映射就废了

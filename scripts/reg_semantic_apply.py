@@ -15,6 +15,9 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from reg_prune_empty import prune_file   # 套用后剪「无条文的空组」，防 `## 标题` 残留
+
 REGS = Path.home() / "ng-regs"
 TASKS = REGS / ".semantic"
 
@@ -79,6 +82,8 @@ def apply_one(task: dict, result: dict) -> tuple[bool, str]:
     if not out.endswith("\n"):
         out += "\n"
     dst.write_text(out, encoding="utf-8")
+    # remove 只删条文行、不删 `## 标题` —— 剪掉因此变空的组，否则残留无内容标题
+    prune_file(dst, drop_if_bulletless=False)
 
     # 3) 校验：产物条文多重集 == 源
     a = collections.Counter(l.rstrip("\n") for l in
