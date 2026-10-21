@@ -201,15 +201,22 @@
         style="width:100%;padding:10px;margin:10px 0;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:var(--panel);color:var(--text)">
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn" type="button" onclick="fbSend()">📨 提交反馈</button>
+        <button class="btn ghost" type="button" onclick="fbMail()">✉️ 用邮件发送</button>
         <button class="btn ghost" type="button" onclick="fbCopy()">📋 复制内容</button>
       </div>
-      <p id="fb-hint" style="color:var(--muted);font-size:13px;margin-top:8px"></p>
+      <p id="fb-hint" style="color:var(--muted);font-size:13px;margin-top:8px">提交后会打开 GitHub 反馈页，点「Submit new issue」即可，我们会收到并回复；没有 GitHub 账号可用邮件发送。</p>
     </div>
     <script>
       function fbText(){var t=document.getElementById('fb-type').value;var b=document.getElementById('fb-body').value.trim();
         var c=document.getElementById('fb-contact').value.trim();
         return '类型：'+t+'\\n系统：'+(/(Mac|iPhone|iPad)/i.test(navigator.userAgent)?'macOS':'Windows/其他')+'\\n问题/建议：'+b+(c?('\\n联系方式：'+c):'');}
       function fbSend(){var b=document.getElementById('fb-body').value.trim();if(!b){document.getElementById('fb-hint').textContent='请先填写内容';return;}
+        var url='https://github.com/sunxx930/ng-platform/issues/new?labels=feedback'
+          +'&title='+encodeURIComponent('[反馈] '+document.getElementById('fb-type').value)
+          +'&body='+encodeURIComponent(fbText()+'\n\n---\n（此内容由官网反馈表单生成）');
+        window.open(url,'_blank','noopener');
+        document.getElementById('fb-hint').textContent='已在新标签打开 GitHub 反馈页：登录后点「Submit new issue」即提交成功。';}
+      function fbMail(){var b=document.getElementById('fb-body').value.trim();if(!b){document.getElementById('fb-hint').textContent='请先填写内容';return;}
         location.href='mailto:support@ng-platform.ai?subject='+encodeURIComponent('[反馈] '+document.getElementById('fb-type').value)+'&body='+encodeURIComponent(fbText());}
       function fbCopy(){navigator.clipboard.writeText(fbText()).then(function(){
         document.getElementById('fb-hint').textContent='已复制，发到 support@ng-platform.ai 即可';});}
@@ -217,7 +224,7 @@
   </section>
 
   <footer>
-    <div class="foot-main">© 2026 NG AI Platform™ · v0.1（MVP）<span style="opacity:.6;margin-left:10px;font-size:12px">™ = 商标申请中</span></div>
+    <div class="foot-main">© 2026 NG AI Platform™ · v1.3.1<span style="opacity:.6;margin-left:10px;font-size:12px">™ = 商标申请中</span></div>
     <div class="foot-links">
       <span>数据说明：默认本地存储，数据在你自己的设备上（Mac ~/.ng-platform · Windows C:\Users\用户名\.ng-platform），不传第三方服务器</span>
     </div>
