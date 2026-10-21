@@ -41,7 +41,7 @@ PLANS = [
 CONTACT = {
     "label": "联系开通",
     "wechat": "",                     # 例如 "ng-tax"（留空则界面不显示）
-    "email": "support@ng-platform.ai", # 授权/开通联系邮箱
+    "email": "sunxx930" + chr(64) + "gmail.com",  # 授权/开通联系邮箱（运行时拼装，源码里不留完整地址）
     "qr": "pay_qr.png",               # 私人收款码图片（微信/支付宝），放在 data/ 下
     "note": "扫码转账后把「机器码」发给发行方，收到授权串后在下方粘贴激活。",
 }

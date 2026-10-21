@@ -994,9 +994,9 @@ function App() {
             </div>
             <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
               想让开发者直接收到？
-              <a href="https://ng-platform.ai/#feedback" target="_blank" rel="noreferrer"> 官网反馈页（免账号）</a>
+              <a href="https://ng-platform.ai/#feedback" target="_blank" rel="noreferrer"> 官网反馈页</a>
               {' · '}
-              <a href={`mailto:support@ng-platform.ai?subject=${encodeURIComponent('[反馈]')}&body=${encodeURIComponent(fb.content || '')}`}>邮件发送</a>
+              <a href={`mailto:${['sunxx930', 'gmail.com'].join('@')}?subject=${encodeURIComponent('[反馈]')}&body=${encodeURIComponent(fb.content || '')}`}>邮件发送</a>
             </p>
           </div>
         </div>
