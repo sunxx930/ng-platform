@@ -37,7 +37,9 @@ def main() -> int:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(p.read_bytes())
             files.append({
-                "path": f"ui/{rel}",
+                # path 是**相对 ui_dir 的落盘路径**（客户端 apply_ui_update 直接拼），
+                # 不能带 "ui/" 前缀，否则会写成 NG_HOME/ui/ui/…（服务端读的是 NG_HOME/ui）
+                "path": rel,
                 "url": f"{BASE}/{rel}",
                 "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
             })
