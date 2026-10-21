@@ -53,6 +53,14 @@ if not _TAX_KEY.is_file() and not _ALLOW_NO_TAX:
 if _TAX_KEY.is_file():
     _datas.append((str(_TAX_KEY), "."))
 
+# 私人收款码（税务版收费模式：扫码转账 → 人工签发授权串）。
+# 属于发行方个人信息，随安装包走、**不进内容热更**（不放进 ui/）。
+_PAY_QR = ROOT / "data" / "pay_qr.png"
+if _PAY_QR.is_file():
+    _datas.append((str(_PAY_QR), "."))
+else:
+    print("[spec] ⚠ 缺少 data/pay_qr.png —— 收费面板会显示「收款码待配置」")
+
 # shell.json —— 外壳能力标记（代码补丁的兼容闸门）。
 # 从 ng_boot 读 PAYLOAD_API、从 app/version.py 读版本，保证与代码同源、不手工维护。
 _ngboot_src = (ROOT / "ng_boot.py").read_text(encoding="utf-8")

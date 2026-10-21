@@ -1,12 +1,14 @@
 """语义检索（本地小模型，零外部服务）。
 
 盘上布局（**内容永不落明文**，见 9/20 定案）：
-    NG_HOME/knowledge/content/<补丁>.enc   tax-cases + index 打包加密 ← 只在内存解
+    NG_HOME/knowledge/content/shards/<分片>.enc  每份源文件一个密文（v2，2026-10-21 起）
+    NG_HOME/knowledge/content/<补丁>.enc         旧整包（v1，兼容读）
     NG_HOME/knowledge/models/embed/        bge-small-zh-v1.5 (ONNX, 23MB)   ← 公开模型，落盘
     NG_HOME/knowledge/models/rerank/       bge-reranker-base  (ONNX, 283MB) ← 公开模型，落盘
 
 补丁（案例库/法规库）各自独立，检索时**在内存解密**并合并打分；
 客户机器上不出现 tax-cases/*.md、index/meta.jsonl 这类明文正文。
+增量更新只替换变动的分片（见 app/services/updater.py::_install_sharded）。
 
 两阶段：纯语义召回 top-K →（有重排模型时）cross-encoder 精排 top-N。
 实测（3820 块 / 163 份）：带重排三查询全部进 top-2，单次约 1 秒。
@@ -44,9 +46,37 @@ def content_dir() -> Path:
     return kb_dir() / "content"
 
 
+def shards_dir() -> Path:
+    """分片密文目录（v2 格式）：每份源文件一个 .enc，增量更新只替换变动的分片。"""
+    return content_dir() / "shards"
+
+
 def content_packs() -> list[Path]:
+    """全部内容密文：旧整包（content/*.enc）+ 新分片（content/shards/*.enc）。"""
     d = content_dir()
-    return sorted(d.glob("*.enc")) if d.is_dir() else []
+    out = sorted(d.glob("*.enc")) if d.is_dir() else []
+    s = shards_dir()
+    if s.is_dir():
+        out += sorted(s.glob("*.enc"))
+    return out
+
+
+def installed_versions() -> list[str]:
+    """已安装内容的版本号。
+
+    v1 整包：`content/<版本>.enc` 的文件名就是版本；
+    v2 分片：`content/shards/` 下没有单一大包，版本记在 `.installed_cases/.installed_regs` 标记里。
+    """
+    kb = kb_dir()
+    out = [p.stem for p in content_dir().glob("*.enc")] if content_dir().is_dir() else []
+    for tag in ("cases", "regs"):
+        try:
+            v = (kb / f".installed_{tag}").read_text(encoding="utf-8").strip()
+        except Exception:      # noqa: BLE001
+            v = ""
+        if v:
+            out.append(v)
+    return sorted(set(out))
 
 
 def _has_model(kind: str) -> bool:
@@ -156,14 +186,22 @@ def load_index():
         raise RuntimeError("无授权/试用密钥，无法解开内容补丁")
 
     Vs, metas, bad = [], [], []
+    sd = shards_dir()
     for p in packs:
         try:
             blob = p.read_bytes()
             plain = AESGCM(key).decrypt(blob[:12], blob[12:], None)
-            with _zip.ZipFile(_io.BytesIO(plain)) as zf:
-                V = _np.load(_io.BytesIO(zf.read("index/vec.npy")))
-                metas += [json.loads(l) for l in
-                          zf.read("index/meta.jsonl").decode("utf-8").splitlines() if l.strip()]
+            if p.parent == sd:              # v2 分片：index.npz（vec + meta 字节）
+                with _zip.ZipFile(_io.BytesIO(plain)) as zf:
+                    z = _np.load(_io.BytesIO(zf.read("index.npz")))
+                    V = z["vec"]
+                    raw = bytes(z["meta"]).decode("utf-8")
+                    metas += [json.loads(l) for l in raw.splitlines() if l.strip()]
+            else:                           # v1 整包：index/vec.npy + index/meta.jsonl
+                with _zip.ZipFile(_io.BytesIO(plain)) as zf:
+                    V = _np.load(_io.BytesIO(zf.read("index/vec.npy")))
+                    metas += [json.loads(l) for l in
+                              zf.read("index/meta.jsonl").decode("utf-8").splitlines() if l.strip()]
             Vs.append(V)
         except Exception as e:      # noqa: BLE001
             # 单个补丁坏了不该把整个检索拖垮；但要**响亮地**报出来（免得内容静默缺失）
@@ -172,6 +210,19 @@ def load_index():
     if not Vs:
         raise RuntimeError(f"全部内容补丁都加载失败: {bad}")
     M = _np.vstack(Vs).astype(_np.float32) if len(Vs) > 1 else Vs[0].astype(_np.float32)
+    # 分片按源文件切，同一句条文可能同时挂在多个主题（跨文件重复）→ 合并时按正文去重。
+    # 放在这里而不是建索引时：否则另一份文件变化时，本文件里被去重掉的那条会凭空消失。
+    seen: set[str] = set()
+    keep: list[int] = []
+    for i, m in enumerate(metas):
+        s = m.get("snippet")
+        if s in seen:
+            continue
+        seen.add(s)
+        keep.append(i)
+    if len(keep) < len(metas):
+        M = M[_np.asarray(keep)]
+        metas = [metas[i] for i in keep]
     _index_cache = (M, metas)
     return _index_cache
 
@@ -194,6 +245,14 @@ def search(query: str, topn: int = 3, recall: int = 20) -> list[dict]:
     没有重排模型（小包形态）时退化为纯语义 top-n，score 即余弦相似度。
     """
     import numpy as np
+    # 授权闸门：试用到期/未激活 → 税务库整体不可用（内容密钥不下发）
+    try:
+        from app.services.license import kb_unlocked
+        if not kb_unlocked():
+            print("[kb] 税务知识库授权已到期：请在「税务版」面板续费并激活授权串", flush=True)
+            return []
+    except Exception:      # noqa: BLE001
+        pass
     # 闸门：法规库上线而未装 → 案例库整体不可用（堵试用期漏洞）
     reason = gate_reason()
     if reason:

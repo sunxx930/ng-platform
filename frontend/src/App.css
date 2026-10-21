@@ -256,3 +256,42 @@ button.link:hover { transform: none; color: var(--accent); }
 .update-bar-dark { background: #1f2937; }
 .update-bar-x { cursor: pointer; opacity: .75; margin-left: 14px; }
 .update-bar-x:hover { opacity: 1; }
+
+/* 税务版：收费模式面板（单档年费 · 试用 · 私人收款码 · 授权串激活） */
+.bill-chip { margin-left: 6px; font-size: 11px; padding: 0 6px; border-radius: 999px; }
+.bill-chip.b-trial { background: rgba(251,191,36,.16); color: var(--warn); }
+.bill-chip.b-ok { background: rgba(52,211,153,.14); color: var(--ok); }
+.bill-chip.b-bad { background: rgba(248,113,113,.14); color: var(--danger); }
+.modal-box.billing { width: 640px; max-width: 94vw; max-height: 90vh; overflow: auto; }
+.bill-state { display: flex; align-items: baseline; gap: 10px; padding: 10px 12px;
+  border-radius: var(--radius-sm); background: var(--panel); border: 1px solid var(--line-2); margin-bottom: 14px; }
+.bill-state b { font-size: 15px; }
+.bill-state span { color: var(--muted); font-size: 13px; }
+.bill-state.b-trial b { color: var(--warn); }
+.bill-state.b-ok b { color: var(--ok); }
+.bill-state.b-bad b { color: var(--danger); }
+.bill-plan-card { border: 1px solid var(--line-2); border-radius: var(--radius-sm); padding: 12px 14px;
+  background: rgba(109,124,255,.06); margin-bottom: 14px; }
+.bill-plan-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.bill-price { color: var(--warn); font-weight: 700; font-size: 16px; white-space: nowrap; }
+.bill-price-note { color: var(--muted); font-style: normal; font-weight: 400; font-size: 11px; }
+.bill-plan-card ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.bill-buy { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 14px; }
+.bill-qr { text-align: center; flex-shrink: 0; }
+.bill-qr img { width: 168px; height: 168px; object-fit: contain; border-radius: 10px;
+  background: #fff; padding: 6px; display: block; }
+.bill-qr-empty { width: 168px; height: 168px; border: 1px dashed var(--line-2); border-radius: 10px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: var(--dim); font-size: 13px; line-height: 1.6; }
+.bill-qr-empty span { font-family: var(--mono); font-size: 11px; }
+.bill-qr-cap { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.bill-steps { flex: 1; min-width: 0; }
+.bill-steps ol { margin: 0 0 10px; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.bill-mid { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.bill-mid code { font-family: var(--mono); background: var(--bg-2); border: 1px solid var(--line);
+  padding: 2px 8px; border-radius: 6px; color: var(--text); letter-spacing: .5px; }
+.bill-contact { display: flex; gap: 14px; font-size: 12px; margin-top: 8px; color: var(--muted); }
+.bill-contact a { color: var(--accent-2); }
+.bill-activate { display: flex; gap: 8px; align-items: center; }
+.bill-activate input { flex: 1; margin-bottom: 0; }
+.bill-msg { color: var(--ok); font-size: 13px; margin-top: 10px; }

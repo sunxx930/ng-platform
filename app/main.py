@@ -130,9 +130,15 @@ def update_apply(pack: int = 0, auth: dict = Depends(require_auth)):
     except Exception as ex:      # noqa: BLE001
         raise HTTPException(400, f"内容升级失败: {ex}")
     if pack:
-        from app.services.updater import apply_knowledge_pack
         try:
-            out["knowledge"] = apply_knowledge_pack(Path(ng_home) / "knowledge")
+            # **只在已启用税务库时**自动拉知识包：首次启动明确拒绝过税务版的用户
+            # 不该被每日自检悄悄下载 300MB 并开始计时（用户 2026-09-27 定「可选启用」）。
+            from app.services.kb_semantic import content_packs
+            if not content_packs():
+                out["knowledge"] = {"applied": False, "reason": "未启用税务库"}
+            else:
+                from app.services.updater import apply_knowledge_pack
+                out["knowledge"] = apply_knowledge_pack(Path(ng_home) / "knowledge")
         except Exception as ex:  # noqa: BLE001
             out["knowledge"] = {"applied": False, "reason": f"{ex}"}
     # 代码补丁：顺带**暂存**（不重启、不切换，下次启动生效）。
@@ -166,6 +172,28 @@ def license_activate(payload: dict):
     return {"ok": True, **status()}
 
 
+@app.get("/billing/status")
+def billing_status():
+    """收费模式状态：试用/授权 + 套餐 + 机器码 + 收款方式（界面一次拿全）。
+
+    口径（用户 2026-10-21 定）：App 免费，税务知识库单档年费、价格面议；
+    转账（私人收款码）后人工签发离线授权串。
+    """
+    from app.services.billing import status as _billing
+    return _billing()
+
+
+@app.get("/billing/qr")
+def billing_qr():
+    """私人收款码图片（发行方放在 data/pay_qr.png，随安装包分发，不走内容热更）。"""
+    from fastapi.responses import FileResponse as _FR
+    from app.services.billing import qr_path
+    p = qr_path()
+    if not p:
+        raise HTTPException(404, "未配置收款码（data/pay_qr.png）")
+    return _FR(p)
+
+
 @app.post("/update/knowledge")
 def update_knowledge(auth: dict = Depends(require_auth)):
     """单独拉知识包（法规/案例库）。已是最新则直接返回，不重复下载。"""
@@ -188,7 +216,10 @@ def tax_status():
                                       refresh_regs_requirement, regs_installed)
     ng_home = os.environ.get("NG_HOME", "").strip()
     kb = Path(ng_home) / "knowledge" if ng_home else None
-    content = sorted(p.stem for p in (kb / "content").glob("*.enc")) if kb and (kb / "content").is_dir() else []
+    from app.services.kb_semantic import content_packs, installed_versions
+    # v2 按分片落盘：版本看 .installed_* 标记，装没装看 content_packs()
+    content = installed_versions() if kb else []
+    packs = content_packs() if kb else []
     saved = [p.name for p in patch_files(kb)] if kb else []
     gate = None
     if kb:
@@ -198,7 +229,7 @@ def tax_status():
             pass
         gate = case_gate_reason(kb)
     return {"content": content, "saved_patches": saved,
-            "installed": bool(content), "license": _lic(),
+            "installed": bool(packs), "license": _lic(),
             # 法规库上线后：案例库要先装法规库才可用
             "regs_installed": bool(kb and regs_installed(kb)),
             "case_usable": gate is None, "gate_reason": gate}

@@ -174,6 +174,138 @@ function AuthScreen({ onAuth }) {
   )
 }
 
+// 税务版：收费模式（单档年费 · 30 天试用 · 私人收款码转账 + 离线授权串）
+// 口径见 app/services/billing.py；本组件只负责展示与调接口。
+const BILL_STATE = {
+  inactive: { text: '未启用', cls: 'b-idle', tip: '启用税务库后开始 30 天试用' },
+  trial: { text: '试用中', cls: 'b-trial', tip: '试用期内可完整使用法规库 + 案例库' },
+  licensed: { text: '已授权', cls: 'b-ok', tip: '年费授权有效，可继续接收法规更新' },
+  expired: { text: '已到期', cls: 'b-bad', tip: '税务库已锁定，输入授权串可恢复' },
+}
+
+function BillingPanel({ token, status, onClose, onRefresh }) {
+  const [b, setB] = useState(status || null)
+  const [tok, setTok] = useState('')
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    api('/billing/status', token).then(setB).catch((e) => setErr(errMsg(e)))
+  }, [])
+
+  const cur = b ? (BILL_STATE[b.state] || BILL_STATE.inactive) : BILL_STATE.inactive
+
+  function refresh() {
+    return api('/billing/status', token).then((d) => { setB(d); onRefresh?.(d) }).catch((e) => setErr(errMsg(e)))
+  }
+
+  function copyMid() {
+    const mid = b?.machine_id || ''
+    if (!mid) return
+    navigator.clipboard?.writeText(mid).then(() => setMsg('机器码已复制')).catch(() => setMsg(mid))
+  }
+
+  function activate() {
+    if (!tok.trim()) return
+    setBusy('act'); setErr(''); setMsg('')
+    api('/license/activate', token, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: tok.trim() }),
+    }).then(() => { setTok(''); setMsg('授权已激活 ✓'); return refresh() })
+      .catch((e) => setErr(errMsg(e))).finally(() => setBusy(''))
+  }
+
+  function enableTax() {
+    setBusy('tax'); setErr(''); setMsg('正在下载/安装税务库（法规库 + 案例库）…')
+    api('/tax/enable', token, { method: 'POST' })
+      .then((r) => {
+        setMsg(r?.applied ? '税务库已更新 ✓' : `无需更新：${r?.knowledge_regs?.reason || r?.knowledge?.reason || '已是最新'}`)
+        return refresh()
+      })
+      .catch((e) => setErr(errMsg(e))).finally(() => setBusy(''))
+  }
+
+  return (
+    <div className="modal" onClick={onClose}>
+      <div className="modal-box billing" onClick={(e) => e.stopPropagation()} data-testid="billing-panel">
+        <h3>📚 税务版 · 开通与授权</h3>
+        {!b ? <div className="loading">加载中…</div> : (
+          <>
+            <div className={`bill-state ${cur.cls}`}>
+              <b>{cur.text}</b>
+              <span>
+                {b.state === 'trial' && `剩余 ${b.days_left} 天（${b.trial_start} 起算）`}
+                {b.state === 'licensed' && `到期 ${b.exp}（剩 ${b.days_left} 天）`}
+                {b.state === 'expired' && (b.reason || '试用期已满')}
+                {b.state === 'inactive' && cur.tip}
+              </span>
+            </div>
+
+            <div className="bill-plan">
+              {(b.plans || []).map((p) => (
+                <div key={p.id} className="bill-plan-card">
+                  <div className="bill-plan-head">
+                    <b>{p.name}</b>
+                    <span className="bill-price">{p.price}
+                      {p.price_note && <em className="bill-price-note"> {p.price_note}</em>}
+                    </span>
+                  </div>
+                  <ul>{(p.features || []).map((f, i) => <li key={i}>{f}</li>)}</ul>
+                </div>
+              ))}
+            </div>
+
+            <div className="bill-buy">
+              <div className="bill-qr">
+                {b.qr_available
+                  ? <img src="/api/billing/qr" alt="收款码" />
+                  : <div className="bill-qr-empty">收款码待配置<br /><span>data/pay_qr.png</span></div>}
+                <div className="bill-qr-cap">扫码转账 · 备注机器码</div>
+              </div>
+              <div className="bill-steps">
+                <ol>{(b.purchase_steps || []).map((s, i) => <li key={i}>{s}</li>)}</ol>
+                <div className="bill-mid">
+                  <span>机器码</span>
+                  <code>{b.machine_id || '—'}</code>
+                  <button className="mini" onClick={copyMid}>复制</button>
+                </div>
+                {(b.contact?.email || b.contact?.wechat) && (
+                  <div className="bill-contact">
+                    {b.contact.wechat && <span>微信：{b.contact.wechat}</span>}
+                    {b.contact.email && <a href={`mailto:${b.contact.email}?subject=${encodeURIComponent('[开通] 税务知识库年费')}`}>{b.contact.email}</a>}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="bill-activate">
+              <input placeholder="粘贴授权串（激活后立即生效）" value={tok}
+                     onChange={(e) => setTok(e.target.value)} data-testid="license-token" />
+              <button className="primary" disabled={!tok.trim() || busy === 'act'} onClick={activate}>
+                {busy === 'act' ? '激活中…' : '激活'}
+              </button>
+            </div>
+
+            {msg && <div className="bill-msg">{msg}</div>}
+            {err && <div className="error"><span>{err}</span></div>}
+
+            <div className="modal-actions">
+              <button onClick={onClose}>关闭</button>
+              <button data-testid="enable-tax" disabled={busy === 'tax'} onClick={enableTax}>
+                {busy === 'tax' ? '下载中…' : b.installed?.length ? '检查更新' : '启用税务库'}
+              </button>
+            </div>
+            <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+              App 本身免费；只有税务知识库（法规库 + 案例库 + 后续更新）按年收费。
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [session, setSession] = useState(() => {
     // 测试直通：URL 带 ?demo=<token> → 免注册直接以 demo 身份进入（测试 agent 用）。
@@ -220,6 +352,8 @@ function App() {
   const [verUpdate, setVerUpdate] = useState(null) // v1.3：有新版安装包（需重装）时提示
   const [recheck, setRecheck] = useState({})     // v1.2.1：数值任务自动复算结果(tid→{verdict,note})
   const [materials, setMaterials] = useState([]) // v1.2.1：项目材料库
+  const [showBilling, setShowBilling] = useState(false)  // 税务版：开通/授权/收款码
+  const [billing, setBilling] = useState(null)
 
   // 会话校验：token 无效/过期 → 清会话回登录页
   useEffect(() => {
@@ -231,6 +365,12 @@ function App() {
   useEffect(() => {
     if (!authed) return
     api('/version', token).then((d) => setVer(d.version || '')).catch(() => {})
+  }, [authed, token])
+
+  // 税务版收费状态（试用/授权/到期）——顶栏常显，便于客户随时看到剩余天数
+  useEffect(() => {
+    if (!authed) return
+    api('/billing/status', token).then(setBilling).catch(() => {})
   }, [authed, token])
 
   // v1.3：登录后自检一次新版安装包（老外壳需要重装才能进入补丁模式时提示；
@@ -395,12 +535,14 @@ function App() {
   }, [detail])
 
   // v1.2.2 内容热更：登录后每天最多自检一次，有更新自动 apply 并刷新（只动前端，不影响数据）
+  // v1.3.1：pack=1 —— 顺带检查知识包（案例库/法规库）。版本没变就只比对标记、不下载；
+  // 法规更新因此能自动到达客户，无需手动点「检查更新」。
   useEffect(() => {
     if (!authed) return
     const KEY = 'ng_ui_update_day'
     const today = new Date().toISOString().slice(0, 10)
     if (localStorage.getItem(KEY) === today) return
-    api('/update/apply', token, { method: 'POST' })
+    api('/update/apply?pack=1', token, { method: 'POST' })
       .then((d) => {
         localStorage.setItem(KEY, today)
         // 响应自 192ea62 起按内容域分组 {"ui":{...},"knowledge":{...},"code":{...}}。
@@ -524,6 +666,17 @@ function App() {
             )}
           </div>
           <button onClick={() => { loadProjects(); refreshNotifs() }}>刷新</button>
+          <button data-testid="billing-open" onClick={() => setShowBilling(true)}
+                  title="税务版开通与授权">
+            📚 税务版
+            {billing && billing.state !== 'inactive' && (
+              <span className={`bill-chip ${(BILL_STATE[billing.state] || BILL_STATE.inactive).cls}`}>
+                {billing.state === 'trial' ? `试用 ${billing.days_left} 天`
+                  : billing.state === 'licensed' ? '已授权'
+                    : '已到期'}
+              </span>
+            )}
+          </button>
           <button className="primary" onClick={() => setShowFb(true)}>反馈</button>
           <button data-testid="logout" onClick={logout}>退出</button>
         </div>
@@ -802,6 +955,11 @@ function App() {
       </div>
 
       {toast && <div className="toast">{toast}</div>}
+
+      {showBilling && (
+        <BillingPanel token={token} status={billing}
+                      onClose={() => setShowBilling(false)} onRefresh={setBilling} />
+      )}
 
       {confirmDel && (
         <div className="modal" onClick={() => setConfirmDel(null)}>

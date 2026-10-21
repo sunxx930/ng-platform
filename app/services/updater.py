@@ -105,16 +105,131 @@ def _safe_name(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", s)[:64] or "pack"
 
 
+def _extract_models(zf, names: list[str], models_dir: Path) -> int:
+    """模型 → 落盘（公开模型，ONNX 需要文件路径）。"""
+    n = 0
+    for name in names:
+        rel = name.replace("\\", "/").lstrip("/")
+        if not rel.startswith("models/") or name.endswith("/"):
+            continue
+        if ".." in rel.split("/") or ":" in rel:
+            continue
+        dst = models_dir / rel[len("models/"):]
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(zf.read(name))
+        n += 1
+    return n
+
+
+def _shards_dir(knowledge_dir: Path) -> Path:
+    return Path(knowledge_dir) / "content" / "shards"
+
+
+def _drop_legacy_pack(knowledge_dir: Path, kind: str, key: bytes) -> str | None:
+    """删掉旧格式（整包）的同类型 content/*.enc —— 否则新旧内容会在检索里叠一遍。
+
+    旧包文件名不带类型，只能解开看内容里有没有 tax-regs/ 或 tax-cases/。只读一次。
+    """
+    import io as _io
+    import zipfile as _zip
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    want = "tax-regs/" if kind == "regs" else "tax-cases/"
+    for p in (Path(knowledge_dir) / "content").glob("*.enc"):
+        try:
+            blob = p.read_bytes()
+            plain = AESGCM(key).decrypt(blob[:12], blob[12:], None)
+            with _zip.ZipFile(_io.BytesIO(plain)) as zf:
+                if any(n.startswith(want) for n in zf.namelist()):
+                    p.unlink()
+                    return p.name
+        except Exception:      # noqa: BLE001
+            continue
+    return None
+
+
+def _install_sharded(zf, info: dict, knowledge_dir: Path, key: bytes) -> dict:
+    """格式 v2：按分片落盘（content/shards/<id>.enc），只写本次包里带的分片。
+
+    增量包（pack.json 有 base）只带变动分片 + removed 清单；完整包带全部，
+    顺带清掉不属于本版的同类分片（内容目录残缺/回滚时能自愈）。
+    """
+    import io as _io
+    import os as _os
+    import re as _re
+    import zipfile as _zip
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    kind = info.get("kind") or "cases"
+    prefix = "r-" if kind == "regs" else "c-"
+    sid_re = _re.compile(r"^[rc]-[0-9a-f]{16}$")
+    names = zf.namelist()
+    shards_dir = _shards_dir(knowledge_dir)
+    shards_dir.mkdir(parents=True, exist_ok=True)
+
+    listed: set[str] = set()
+    n_shards = n_files = 0
+    for s in info.get("shards") or []:
+        sid = str(s.get("id") or "")
+        if not sid_re.match(sid):
+            continue
+        listed.add(sid)
+        head = f"shards/{sid}/"
+        members = [n for n in names if n.startswith(head) and not n.endswith("/")]
+        if not members:
+            continue
+        buf = _io.BytesIO()
+        with _zip.ZipFile(buf, "w", _zip.ZIP_DEFLATED, compresslevel=6) as cz:
+            for n in members:
+                rel = n[len(head):]
+                if ".." in rel.split("/") or ":" in rel:
+                    continue
+                cz.writestr(rel, zf.read(n))
+                n_files += 1
+        nonce = _os.urandom(12)
+        tmp = shards_dir / f".{sid}.tmp"
+        tmp.write_bytes(nonce + AESGCM(key).encrypt(nonce, buf.getvalue(), None))
+        _os.replace(tmp, shards_dir / f"{sid}.enc")
+        n_shards += 1
+
+    for rid in info.get("removed") or []:
+        rid = str(rid)
+        if sid_re.match(rid):
+            try:
+                (shards_dir / f"{rid}.enc").unlink(missing_ok=True)
+            except Exception:      # noqa: BLE001
+                pass
+
+    if not info.get("base"):        # 完整包：清掉不在清单里的同类分片
+        for p in shards_dir.glob(f"{prefix}*.enc"):
+            if p.stem not in listed:
+                try:
+                    p.unlink()
+                except Exception:      # noqa: BLE001
+                    pass
+
+    models_dir = knowledge_dir / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    n_models = _extract_models(zf, names, models_dir)
+    legacy = _drop_legacy_pack(knowledge_dir, kind, key)
+    return {"shards": n_shards, "files": n_files, "models": n_models,
+            "installed_total": len(list(shards_dir.glob(f"{prefix}*.enc"))),
+            "total_after": int(info.get("total_after") or 0), "legacy_dropped": legacy}
+
+
 def _install_blob(blob: bytes, knowledge_dir: Path, version: str) -> dict:
-    """装补丁：内存解密 → 模型落盘（公开）→ 内容**重新加密**成 content/*.enc。
+    """装补丁：内存解密 → 模型落盘（公开）→ 内容**重新加密**后落盘。
 
     ⚠️ 关键：**tax-cases / index / tax-regs 一律不写明文盘**（9/20 定案：内容不可提取）。
-    盘上只留 content/<补丁>.enc，检索时在内存解密（见 kb_semantic.load_index）。
+    盘上只留密文，检索时在内存解密（见 kb_semantic.load_index）。
+
+    两种格式：
+      v1（旧）    content/<补丁>.enc —— 整包
+      v2（2026-10-21 起）content/shards/<分片>.enc —— 按源文件分片，增量包只带变动分片
 
     没有授权/试用密钥时不能解 → 补丁原件存到 patches/ 等激活后再装。
     """
     import io as _io
-    import os as _os
     import zipfile as _zip
 
     knowledge_dir = Path(knowledge_dir)
@@ -137,36 +252,42 @@ def _install_blob(blob: bytes, knowledge_dir: Path, version: str) -> dict:
     content_dir.mkdir(parents=True, exist_ok=True)
     models_dir.mkdir(parents=True, exist_ok=True)
 
-    n_models = n_content = 0
     with _zip.ZipFile(_io.BytesIO(plain)) as zf:
         names = zf.namelist()
-        # 1) 模型 → 落盘（公开模型，ONNX 需要文件路径）
-        for name in names:
-            rel = name.replace("\\", "/").lstrip("/")
-            if not rel.startswith("models/") or name.endswith("/"):
-                continue
-            if ".." in rel.split("/") or ":" in rel:
-                continue
-            dst = models_dir / rel[len("models/"):]
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_bytes(zf.read(name))
-            n_models += 1
-        # 2) 内容 → 重新打包再加密成 content/<补丁>.enc（**不落明文**）
-        buf = _io.BytesIO()
-        with _zip.ZipFile(buf, "w", _zip.ZIP_DEFLATED, compresslevel=6) as cz:
-            for name in names:
-                rel = name.replace("\\", "/").lstrip("/")
-                if not rel.startswith(_CONTENT_DIRS) or name.endswith("/"):
-                    continue
-                if ".." in rel.split("/") or ":" in rel:
-                    continue
-                cz.writestr(rel, zf.read(name))
-                n_content += 1
-        nonce = _os.urandom(12)
-        enc = AESGCM(key).encrypt(nonce, buf.getvalue(), None)
-        (content_dir / f"{_safe_name(version)}.enc").write_bytes(nonce + enc)
+        info = None
+        if "pack.json" in names:
+            try:
+                info = json.loads(zf.read("pack.json"))
+            except Exception:      # noqa: BLE001
+                info = None
+        if info and info.get("format") == 2:
+            # 包内版本号才是权威（客户手动下载的文件名可能是任意名）
+            version = str(info.get("version") or version)
+            res = _install_sharded(zf, info, knowledge_dir, key)
+            regs_installed = (info.get("kind") == "regs")
+        else:
+            res = {"shards": 0, "total_after": 0}
+            # v1：内容 → 重新打包再加密成 content/<补丁>.enc（**不落明文**）
+            n_models = _extract_models(zf, names, models_dir)
+            buf = _io.BytesIO()
+            n_content = 0
+            with _zip.ZipFile(buf, "w", _zip.ZIP_DEFLATED, compresslevel=6) as cz:
+                for name in names:
+                    rel = name.replace("\\", "/").lstrip("/")
+                    if not rel.startswith(_CONTENT_DIRS) or name.endswith("/"):
+                        continue
+                    if ".." in rel.split("/") or ":" in rel:
+                        continue
+                    cz.writestr(rel, zf.read(name))
+                    n_content += 1
+            import os as _os
+            nonce = _os.urandom(12)
+            enc = AESGCM(key).encrypt(nonce, buf.getvalue(), None)
+            (content_dir / f"{_safe_name(version)}.enc").write_bytes(nonce + enc)
+            res["content"] = n_content
+            res["models"] = n_models
+            regs_installed = any(n.replace("\\", "/").startswith("tax-regs/") for n in names)
 
-    regs_installed = any(n.replace("\\", "/").startswith("tax-regs/") for n in names)
     # 试用期起算（用户 2026-09-27 定，甲）：**法规库启用**这一刻才起算。
     # 案例补丁不含 tax-regs/ → 装案例不烧试用期。
     if regs_installed:
@@ -186,8 +307,18 @@ def _install_blob(blob: bytes, knowledge_dir: Path, version: str) -> dict:
     except Exception:      # noqa: BLE001
         pass
 
+    # 已装版本标记：增量包选包与界面「已启用」判断都看它（v2 没有整包文件名可看）。
+    # 手动安装（install_patch_file）也走这里，别再依赖下载路径单独写。
+    tag = (info or {}).get("kind")
+    if tag in ("cases", "regs"):
+        try:
+            (knowledge_dir / f".installed_{tag}").write_text(version, encoding="utf-8")
+        except Exception:      # noqa: BLE001
+            pass
+
     (knowledge_dir / "version.json").write_text(
-        json.dumps({"version": version, "regs": regs_installed}, ensure_ascii=False),
+        json.dumps({"version": version, "regs": regs_installed, "format": 2 if info else 1},
+                   ensure_ascii=False),
         encoding="utf-8")
     # 内容变了 → 让检索重建内存索引
     try:
@@ -196,7 +327,7 @@ def _install_blob(blob: bytes, knowledge_dir: Path, version: str) -> dict:
     except Exception:      # noqa: BLE001
         pass
     return {"applied": True, "version": version, "reason": "ok",
-            "regs": regs_installed, "models": n_models, "content": n_content}
+            "regs": regs_installed, **res}
 
 
 def install_patch_file(src: Path, knowledge_dir: Path) -> dict:
@@ -237,6 +368,9 @@ def apply_knowledge_pack(knowledge_dir: Path, *, keep_encrypted: bool = True) ->
 
     manifest 里对应字段：
         "knowledge": {"version": "2026-09", "url": "...", "sha256": "...", "size": 123}
+        # v2 增量段还会带 base（基线版本）与 full（完整包 url/sha256/size）：
+        "knowledge_regs": {"version": "regs-…", "url": "<增量包>", "sha256": "…",
+                           "size": 123, "base": "regs-…", "full": {"url": "…", …}}
     返回 {applied, version, reason}。
     """
     knowledge_dir = Path(knowledge_dir)
@@ -257,34 +391,82 @@ def apply_knowledge_pack(knowledge_dir: Path, *, keep_encrypted: bool = True) ->
     return out
 
 
-def _apply_one_pack(knowledge_dir: Path, pack: dict, tag: str) -> dict:
-    """下载并安装一个补丁（cases / regs 共用）。"""
-    url = str(pack.get("url", "") or "")
-    version = str(pack.get("version", "") or "")
-    want = str(pack.get("sha256", "") or "").lower()
+def _fetch_install(knowledge_dir: Path, entry: dict, tag: str, version: str) -> dict:
+    """下载 entry 指向的包并安装（断点续传 + sha256 校验 + .part 清理）。"""
+    url = str(entry.get("url", "") or "")
+    want = str(entry.get("sha256", "") or "").lower()
     if not url:
-        return {"applied": False, "version": version, "reason": "manifest 无该补丁"}
-
-    mark = knowledge_dir / f".installed_{tag}"
-    if mark.is_file() and mark.read_text(encoding="utf-8").strip() == version:
-        return {"applied": False, "version": version, "reason": "已是最新"}
-
-    part = knowledge_dir / f"kb-{tag}.pack.part"
+        return {"applied": False, "version": version, "reason": "manifest 无该补丁地址"}
+    knowledge_dir = Path(knowledge_dir)
+    knowledge_dir.mkdir(parents=True, exist_ok=True)
+    # .part 按包 sha 命名：增量包和完整包互不干扰，中断后还能续传
+    part = knowledge_dir / f"kb-{tag}-{(want or 'x')[:12]}.pack.part"
     try:
         _download(url, part, resume=True)
         blob = part.read_bytes()
         if want and hashlib.sha256(blob).hexdigest() != want:
-            return {"applied": False, "version": version,
-                    "reason": "sha256 校验失败（已保留 .part 供续传）"}
+            part.unlink(missing_ok=True)
+            return {"applied": False, "version": version, "reason": "sha256 校验失败"}
         res = _install_blob(blob, knowledge_dir, version)
         if res.get("applied"):
             try:
-                mark.write_text(version, encoding="utf-8")
+                (knowledge_dir / f".installed_{tag}").write_text(version, encoding="utf-8")
             except Exception:      # noqa: BLE001
                 pass
+        # 安装/落盘后 .part 已无用（未授权时内容已在 patches/<version>.enc）
+        try:
+            part.unlink(missing_ok=True)
+        except Exception:      # noqa: BLE001
+            pass
         return res
     except Exception as e:  # noqa: BLE001
         return {"applied": False, "version": version, "reason": f"失败: {e}"}
+
+
+def _apply_one_pack(knowledge_dir: Path, pack: dict, tag: str) -> dict:
+    """下载并安装一个补丁（cases / regs 共用）。
+
+    v2 包支持增量：manifest 段里带 base（基线版本）+ full（完整包）时，
+    客户端正好在基线上就下增量包（只含变动分片），否则下完整包。
+    """
+    version = str(pack.get("version", "") or "")
+    url = str(pack.get("url", "") or "")
+    if not url:
+        return {"applied": False, "version": version, "reason": "manifest 无该补丁"}
+
+    mark = knowledge_dir / f".installed_{tag}"
+    installed = mark.read_text(encoding="utf-8").strip() if mark.is_file() else ""
+    if installed == version:
+        return {"applied": False, "version": version, "reason": "已是最新"}
+
+    # 之前已下载但因未授权没装成（存在 patches/<version>.enc）→ 直接装本地，不再重下
+    saved = knowledge_dir / "patches" / f"{_safe_name(version)}.enc"
+    if saved.is_file():
+        res = install_patch_file(saved, knowledge_dir)
+        if res.get("applied"):
+            try:
+                mark.write_text(str(res.get("version") or version), encoding="utf-8")
+            except Exception:      # noqa: BLE001
+                pass
+        return res
+
+    base = str(pack.get("base") or "")
+    full = pack.get("full") or {}
+    if base and installed != base:
+        # 不在增量基线上（首次安装 / 错过版本 / 内容目录被清）→ 用完整包
+        if not full.get("url"):
+            return {"applied": False, "version": version,
+                    "reason": f"需要先安装完整包（当前 {installed or '无'}，增量基线 {base}）"}
+        return _fetch_install(knowledge_dir, full, tag, version)
+
+    res = _fetch_install(knowledge_dir, pack, tag, version)
+    # 增量装完分片数对不上（内容目录残缺）→ 用完整包重建
+    total = res.get("total_after") or 0
+    if (res.get("applied") and total and res.get("installed_total") != total
+            and full.get("url")):
+        res = _fetch_install(knowledge_dir, full, tag, version)
+        res["repaired"] = True
+    return res
 
 
 def apply_ui_update(ui_dir: Path) -> dict:

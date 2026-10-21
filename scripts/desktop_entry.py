@@ -90,7 +90,7 @@ def _notify(title: str, text: str) -> None:
 
 
 def _maybe_enable_tax(wd: Path) -> None:
-    """首次启动问一句要不要启用税务版（案例库补丁）。
+    """首次启动问一句要不要启用税务版（法规库 + 案例库两个补丁）。
 
     补丁与安装包并列挂在官网，点「要」就地下载安装（带断点续传 + sha256 校验）。
     只问一次（无论答什么都记 .tax_prompted），之后可由界面里的入口再启用。
@@ -113,8 +113,8 @@ def _maybe_enable_tax(wd: Path) -> None:
     ok = _ask_yes_no(
         "NG AI Platform 税务版",
         "要启用「税务知识库」吗？\n\n"
-        "启用后可在助手里检索税务案例（案例库 + 语义检索，离线可用）。\n"
-        "需要联网下载一次（约 300MB，支持断点续传）。",
+        "启用后可在助手里检索法规条文与税务案例（法规库 + 案例库，离线可用）。\n"
+        "含 30 天试用；需要联网下载一次（约 300MB，支持断点续传）。",
     )
     try:
         kb.mkdir(parents=True, exist_ok=True)

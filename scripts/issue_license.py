@@ -47,7 +47,8 @@ def sign(payload: dict) -> str:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mid", default="", help="绑定机器码（客户用 --machine-id 查）")
-    ap.add_argument("--days", type=int, default=365, help="有效期天数（默认 365）")
+    ap.add_argument("--days", type=int, default=365,
+                    help="有效期天数（按天收费：客户买几天就签几天；默认 365）")
     ap.add_argument("--exp", default="", help="直接指定到期日 YYYY-MM-DD（优先于 --days）")
     ap.add_argument("--tier", default="tax", help="版本档位（默认 tax）")
     ap.add_argument("--name", default="", help="客户名（仅记录用，可空）")
