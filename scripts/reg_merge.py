@@ -45,11 +45,21 @@ def collect(root: Path, section: str):
     return buckets
 
 
+_WS = re.compile(r"\s+")
+
+
 def dedup(rows):
-    """同一条文可能在多层出现 —— 按「文号+单元+正文」指纹去重。"""
+    """同一条文可能在多层出现 —— 按「文号+单元+正文」指纹去重。
+
+    ⚠ 指纹**先做空白归一化**再截断。同一份法规常被两份渲染件收进来（不同文件夹的同名
+    PDF，或 EY 导出件的文字层 + 后附整份扫描页 OCR），两遍只在空格/换行/全角空白上差
+    一点；原指纹 `rest[:120]` 对空白敏感 → 漏合（实测：「4.主管…」vs「4. 主管…」、
+    「6 小时」vs「6小时」）。归一化只吃掉空白，**不碰正文用字**，故不会把"成本"和
+    "收入"这种真不同的条文合掉。
+    """
     seen, out = set(), []
     for doc, unit, rest in rows:
-        fp = (doc, unit, rest[:120])
+        fp = (doc, unit, _WS.sub("", rest)[:120])
         if fp in seen:
             continue
         seen.add(fp)

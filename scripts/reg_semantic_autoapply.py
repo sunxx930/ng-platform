@@ -36,6 +36,9 @@ def doc_of(line: str) -> str | None:
     for t in reversed(_TAG.findall(line)):
         if t.startswith("仅适用：") or t in ("税种依文件标题", ""):
             continue
+        # 网页页脚型坏标签：`〔国家税务总局公告2012年第29号 前言】****… 【来源〕`
+        # （PDF 里括号用了形近的 】，贪婪吃到整段解读页脚）→ 先截断再取文号
+        t = re.split(r"[】【]|\*{2,}", t)[0]
         toks = t.split()
         if len(toks) > 1 and _CLAUSE.match(toks[-1]):
             toks = toks[:-1]

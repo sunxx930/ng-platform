@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import collections
 import datetime
+import difflib
 import hashlib
 import json
 import os
@@ -207,7 +208,13 @@ def title_topic(title: str) -> str:
     t = re.sub(r"^关于(继续|延续)?(实施|执行)?", "", title or "")
     t = re.sub(r"(有关)?(税收|税费)?(政策)?(问题)?的(公告|通知|批复|函|规定|办法|通告)$", "", t)
     t = re.sub(r"[，,。；;]$", "", t).strip()
-    return t if 3 <= len(t) <= 40 else ""
+    # 上限：**只为挡"整段正文被当成标题"的垃圾**，不能当正常标题的长度闸门。
+    # ⚠ 2026-10-09 修：原为 40 —— 而 `title` 常是「文号 + 名称」没剥开的长串
+    # （`doc_no_from_name` 认不出发文机关连写的文号时就整串返回），一过 40 字就取不出事项；
+    # 这类文档又没有主体 → 事件为空 → 条文既没税种落点也没事件，**整份不进合并层**
+    # （实测：发改委 商务部令第48号 自贸区负面清单 46 字丢 28 条、工商外企字[2007]282号 101 字丢 6 条；
+    #   对照 47号 39 字就正常）。全库文件名的最大长度 101 字，故放到 120 覆盖全部。
+    return t if 3 <= len(t) <= 120 else ""
 
 def short_title(title: str) -> str:
     """短标题：给文号消歧用（仅当同一文号被多份文件共用时）。
@@ -331,6 +338,11 @@ def split_meta_head(raw: str) -> tuple[dict, str]:
     return meta, "\n".join(lines[i:])
 
 
+# 「条文起头」判据：用来判断一段文本里**是否已经含条文** ——
+# `canonic` 的 `_FOOT` 与 `strip_web_prefix` 都拿它当"别把正文切掉"的闸门（用户 2026-10-10）。
+_FOOT_BODY = re.compile(r"(?m)^\s*第[一二三四五六七八九十百零\d]+条")
+
+
 def canonic(text: str) -> str:
     """NFKC 归一化 + 清洗网页复制噪声。
 
@@ -353,9 +365,17 @@ def canonic(text: str) -> str:
     # （实测《财税[2026]39号》在 17% 处 —— 它后面还跟着附件大表格，所以页脚不在"末尾"，
     #   按"后半段"判会漏掉）。用 "不在开头" 这个特征一次覆盖两种情况。
     _FOOT = re.compile(r"(?m)^\s*(?:纠错或建议|热门关键词|本站热词|网站标识码|当前位置\s*[:：]|京ICP备)")
+    # ⚠ 2026-10-10 修：**命中即截尾太狠**。gov.cn 打印件会把**站点页脚模板排在正文之前**
+    #   （不是页脚在末尾的常态）—— 实测《国令第784号》「网站标识码」落在 9% 处，截尾把
+    #   国务院令 + 第一条…第十三条连元数据一起砍光，整篇只剩 106 字导航；全库清单 2522 份里
+    #   共 4 份中招（财综[2023]10号 25% / 国令784号 9% / 财税[2026]50号 12% / 财关税[2024]19号 37%）。
+    #   改为：**只有锚点之后确实没有条文**（即真页脚在末尾，原意覆盖的 8 份热词页脚件都是这种）
+    #   才截尾；锚点后还有条文的，交给下面的**按行丢弃** —— `_FOOT_ANCHOR`/`_NAV_LINE` 本来就能
+    #   删掉这些站点模板行（含「热门关键词:个人所得税增值税企业所得税…」那串热词，NFKC 后照样命中）。
     for _m in _FOOT.finditer(text):
         if _m.start() > len(text) * 0.05:
-            text = text[: _m.start()]
+            if not _FOOT_BODY.search(text[_m.start():]):
+                text = text[: _m.start()]
             break
     drop = re.compile(r"^(搜索|高级搜索|成文日期|字体|分享到|【?打印】?$|【?下载】?$|"
                       r"发布日期|索引号|来源|字号|正文下载|相关文章|扫一扫|"
@@ -415,9 +435,16 @@ def strip_web_prefix(body: str) -> str:
     """站点头常与首行正文粘成一行（…网站纠错财政部 税务总局关于…）→ 从标题处截断。
 
     ⚠ 只能在**正文**上做：带 re.S 的正则若跑在全文上，会把 EY 文档的 Part A 元数据一起吃掉。
+    ⚠ 2026-10-10 修：**要切掉的那段里若含条文，就不切**。该正则用 `^.*?` 在**全文**里找第一处
+      「财政部/国家税务总局/国务院/海关总署 + 关于|公告|通知|令」，在多页站点打印件里会**切进正文中部**
+      —— 实测《投资相关法规/1 公司法.pdf》切在 75% 处（26231 字），把前 3/4 的条文（第一~二百多条）
+      整段丢掉，只剩 99 条；真"站点头"只有几百字、不含条文。判据与 `canonic` 的 `_FOOT` 一致。
     """
-    return re.sub(r"^.*?(?=(?:财政部|国家税务总局|国务院|海关总署)[^\n]{0,20}(?:关于|公告|通知|令))",
-                  "", body, count=1, flags=re.S)
+    m = re.match(r"^.*?(?=(?:财政部|国家税务总局|国务院|海关总署)[^\n]{0,20}(?:关于|公告|通知|令))",
+                 body, flags=re.S)
+    if m and not _FOOT_BODY.search(m.group(0)):
+        return body[m.end():]
+    return body
 
 
 _ANNEX = re.compile(
@@ -436,6 +463,14 @@ _ANNEX = re.compile(
 # （实测《技术创新项目扶持计划操作规程》正文写着「资助金额」，用「金额」判会把整份规程误排除）
 _FORM_MARK = re.compile(r"填写说明|填报说明|申报表|申报附列资料|附列资料|税源明细表|"
                         r"金额单位|纳税人识别号")
+# 章标题：附件里出现「第X章 总则」这种**行首 + 短标题**的，附件本身就是一份成建制的文件。
+# 表格/清单不可能有章标题，而正文里偶然出现「填写说明/申报表」这类表单词却极常见——
+# 所以章结构要**先于**表单特征词判定（用户 2026-10-10）。
+# 实测《深外管[2019]19号》附件《…外汇管理改革试点实施细则》因正文里有一处「填写说明」
+# 被判成表格，79 条正文全丢；《国家税务总局公告2022年第7号》的《个人所得税专项附加扣除
+# 操作办法(试行)》30 条同理全丢。
+# 行首限「第X章」且标题 ≤20 字，避免把表格单元格里引用的「第三章第X条…」当成章标题。
+_CHAPTER = re.compile(r"(?m)^\s*第[一二三四五六七八九十]+章\s*[^\n]{0,20}$")
 _CIRC = re.compile(
     r"^(.+?(?:\[[^\]]*\]第?\d+号"                       # 财税[2001]10号 / 粤澳深合管秘[2023]3号
     r"|(?:公告|通告|令)\s*\d{4}\s*年第?\s*\d+\s*号"      # 国家税务总局公告2023年第35号
@@ -509,6 +544,10 @@ def split_annex_by_opening(body: str) -> tuple[str, str]:
 
 def _annex_kind(tail: str) -> str:
     """附件是「文件」还是「表格/清单」。前者要收录成条文，后者只单独留存。"""
+    # **章结构优先**：有「第X章」的必是文件。判据顺序很重要——表单特征词会误命中正文
+    # （《深外管[2019]19号》细则里一处「填写说明」→ 79 条正文全丢，用户 2026-10-10）。
+    if _CHAPTER.search(tail):
+        return "doc"
     if _FORM_MARK.search(tail):
         return "table"
     # **先看附件自己的标题**：写着「…指导目录 / …产业目录 / …清单 / …名单」的就是目录。
@@ -882,6 +921,49 @@ def page_text(pg) -> str:
                 pass
 
 
+_APPEND_SCAN_RATIO = 0.5
+
+# 「纯扫描页」判据用的空白归一化（与 reg_merge.dedup 同一思路：只吃空白、不碰正文用字）
+_WS_ALL = re.compile(r"\s+")
+
+
+def _normal_page(t: str) -> bool:
+    """该页有**可用文字层**（非空、非乱码）——即原生的、不需要 OCR 的那种。"""
+    return len(t.strip()) >= 30 and not _is_garbled(t)
+
+
+def _drop_appended_scan(pages: list[str], native: list[str]) -> int:
+    """返回**保留页数**：EY 件若在 Part C 页之后接一段**纯扫描页**（文字层空白/乱码、靠 OCR 出字），
+    且这段的 OCR 文本与 Part C 之前的**原生文字层**高度重合 → 判为「同一份文件又附了一遍扫描件」，
+    整段弃之。否则原样保留（附在 Part C 之后的附件正文是真的新内容，不能切）。
+
+    实测（全库 2363 份清单）：符合「Part C 后有纯扫描页」的 **20 份**里，只有
+    《财税[2020]48号》重合（0.687，28 条里 13 条是重复），次高 0.265（《工信部联重装[2021]157号》，
+    它 Part C 后附的是**免税进口商品清单**，属新内容）→ 阈值 0.5 把两类干净分开。
+
+    **只截尾**：前面的条文下标不变 → 已判结果（`all-class.json`）不受影响。
+    """
+    n = len(pages)
+    if not any("Part C" in t for t in native):
+        return n
+    pidx = next(i for i, t in enumerate(native) if "Part C" in t)
+    tail = []
+    for i in range(pidx + 1, n):
+        if _normal_page(native[i]):
+            break
+        tail.append(i)
+    # 后面还有原生页 → 不是「尾部整段附录像件」，保守不动
+    if not tail or tail[-1] != n - 1:
+        return n
+    head = _WS_ALL.sub("", "\n".join(native[:pidx + 1]))[:6000]
+    tail_txt = _WS_ALL.sub("", "".join(pages[i] for i in tail))[:6000]
+    if not head or not tail_txt:
+        return n
+    if difflib.SequenceMatcher(None, head, tail_txt).ratio() >= _APPEND_SCAN_RATIO:
+        return tail[0]
+    return n
+
+
 def _ocr_coords(img_path: str) -> list[tuple]:
     """带坐标 OCR：每行 (x0,y0,x1,y1,text)，坐标归一化 0-1、原点左下。"""
     try:
@@ -937,9 +1019,16 @@ def struck_text(pg, rect) -> str:
 
 def parse_pdf(p: Path) -> dict:
     doc = pymupdf.open(str(p))
-    raw = canonic("\n".join(page_text(pg) for pg in doc))
+    pages = [page_text(pg) for pg in doc]
+    raw = canonic("\n".join(pages))
     dead = strikeouts(doc)
     is_ey = "Part B" in raw and "Part A" in raw
+    if is_ey:
+        # 有些 EY 件在 Part C 之后又附了一整份**同文的扫描件**（文字层空白 → 被 OCR）：
+        # 不截尾的话同一份文件进库两遍、条文重复（实测《财税[2020]48号》28 条 = 15 + 13 重复）。
+        keep = _drop_appended_scan(pages, [pg.get_text() for pg in doc])
+        if keep < len(pages):
+            raw = canonic("\n".join(pages[:keep]))
     meta_head, rest = split_meta_head(raw)       # 第三种形态：法律数据库导出件
     if is_ey:
         # EY 件只借它的 Part B（正文）；Part A 的元数据**弃用**——
