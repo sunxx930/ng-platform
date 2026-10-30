@@ -706,8 +706,12 @@ def clean_body(text: str) -> list[str]:
     merged, buf = [], ""
     for l in lines:
         m = _CLAUSE.match(l)
-        if m and m.group(1).startswith("第") and buf and not _SENT_END.search(buf):
-            # 「《暂行条例》\n第七条的…」——版面换行把引用劈开了，不是新条，继续合并
+        if (m and m.group(1).startswith("第") and buf
+                and not _SENT_END.search(buf) and not _CH_TAIL.search(buf)):
+            # 「《暂行条例》\n第七条的…」——版面换行把引用劈开了，不是新条，继续合并。
+            # 但 buf 是章标题（「第二章企业技术中心认定」）时，后一行必是新条：
+            # 网页打印件里章标题不带标点，若不特判会把「第五条」并进上一条（实测 39 号令
+            # 第五条/第十一条/第十五条/第二十一条 四条整条丢失）。
             m = None
         if buf and (m or _SENT_END.search(buf)):
             merged.append(buf); buf = l
@@ -716,6 +720,11 @@ def clean_body(text: str) -> list[str]:
     if buf:
         merged.append(buf)
     return merged
+
+
+# 缓冲区**末尾**是章标题（`buf` 是逐行拼接的，不含换行）——
+# 网页打印件里章标题后面直接跟条号、中间没有标点，光看 _CHAPTER.match(buf) 判不到。
+_CH_TAIL = re.compile(r"第[一二三四五六七八九十]+章[\s　]*[^\n。；：]{0,20}$")
 
 
 # 条号不一定在行首：PDF 常把「一、…。二、…。」抽成一整行，必须在句中再切一刀。
@@ -973,6 +982,11 @@ def _drop_appended_scan(pages: list[str], native: list[str]) -> int:
 _FRAME_DUP_MIN = 3
 _FRAME_RATIO = 0.3
 _PROSE_PUNCT = re.compile(r"[，。；：、]")
+# 公文体短行（成文日期、署名、生效句）本来就没有句读，上面的「够长且有标点」会误删。
+# 实测 39 号令：删掉「年2月1日起施行」后正文变成「现予公布,自2026」+ 后续页直接粘上。
+_OFFICIAL_SHORT = re.compile(
+    r"\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|起施行\s*$"
+    r"|^\s*(?:主\s*任|部\s*长|局\s*长|署\s*长|厅\s*长|省\s*长|市\s*长|县\s*长|总\s*理)\s*[：:]")
 
 
 def _strip_site_frame(t: str) -> str:
@@ -998,7 +1012,8 @@ def _strip_site_frame(t: str) -> str:
         line = lines[i]
         # 残留的框架行：够长且有句读才留（真公文的「第X号令/附件：」这类短标签由
         # 文件名与后续条文覆盖，丢了不影响入库）
-        if len(line) >= 8 and _PROSE_PUNCT.search(line):
+        if ((len(line) >= 8 and _PROSE_PUNCT.search(line))
+                or _OFFICIAL_SHORT.search(line.translate(str.maketrans(_RADICALS)))):
             out.append(line)
     return "\n".join(out)
 

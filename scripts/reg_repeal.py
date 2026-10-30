@@ -92,6 +92,11 @@ def numbers(text: str) -> set[str]:
             else:
                 out.add(f"{norm_org(g['org'])}|令|{g['n']}")
                 out.add(f"~|令|{g['n']}")
+    # 「2016 年第 34 号令」：令在号后，上面几个模式都不认，而这是部委令最常见的引用写法。
+    # 它与库内文档注释里的「…令第34号」是同一份东西 → 归到同一个 `|令|N` 键。
+    for m in re.finditer(r"(?P<org>[一-龥]{2,20}?)\s*(?P<y>\d{4})\s*年第\s*(?P<n>\d+)\s*号令",
+                         text):
+        out.add(f"{norm_org(m['org'])}|令|{m['n']}")
     return out
 
 
@@ -135,6 +140,12 @@ def find_repeals(name: str, path: Path) -> list[dict]:
         if not line.startswith("- "):
             continue
         body = line[2:].split(APPLY_MARK)[0]    # 去掉 仅适用/文号注释
+        # 行头【文档 第X条】与本条自己的「第X条」都不是条文内容：不剥掉的话，
+        # 「废止」若出现在本条**第一句**，窗口里必带「条」字 → LOCAL_SCOPE 误判成局部废止。
+        # 实测 39 号令第三十二条「本办法自…起施行,《国家企业技术中心认定管理办法》…同时废止」
+        # 因此漏检（旧办法里还有「本办法自…施行,第X条…」同型句式）。
+        body = re.sub(r"^【[^】]*】", "", body)
+        body = re.sub(r"^\s*第[一二三四五六七八九十百零\d]+条\s*", "", body)
         for cue in CUE.finditer(body):
             if _inside_title(body, cue.start()):
                 continue
