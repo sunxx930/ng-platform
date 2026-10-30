@@ -378,7 +378,7 @@ def canonic(text: str) -> str:
                 text = text[: _m.start()]
             break
     drop = re.compile(r"^(搜索|高级搜索|成文日期|字体|分享到|【?打印】?$|【?下载】?$|"
-                      r"发布日期|索引号|来源|字号|正文下载|相关文章|扫一扫|"
+                      r"发布日期|发布时间|索引号|来源|字号|正文下载|相关文章|扫一扫|"
                       r"page\s*\d+\s*of\s*\d+|第\s*\d+\s*页\s*共\s*\d+\s*页)")
 
     # 网站页脚 / 导航整块：页脚行在 PDF 文本层里是**独立行**，会被后续的版面合并
@@ -396,7 +396,8 @@ def canonic(text: str) -> str:
     _FOOT_ANCHOR = re.compile(
         r"ICP备|网站标识码|公网安备|网站地图|网站管理|访问统计|隐私声明|友情链接|"
         r"无障碍浏览|版权所有|纠错或建议|热门关键词|本站热词|"
-        r"请输入关键词|请输入您要搜索|请输入您要查询|智能问答|关怀版|"
+        r"请输入关键词|请输入关键字|请输入您要搜索|请输入您要查询|智能问答|关怀版|"
+        r"热门搜索|"
         # 各站点专有模板词（横琴合作区 / 广东省府 / 国家税务总局 门户）
         r"Guangdong-Macao|合作区概览|横琴新视界|澳门办事处网站|"
         r"一图读懂|答记者问|全部文件解读|搜一搜|收藏订阅|中国政府网|"
@@ -964,6 +965,44 @@ def _drop_appended_scan(pages: list[str], native: list[str]) -> int:
     return n
 
 
+# 站点「网页打印件」页面：导航/侧栏/页脚在文本层里**每条连排 4 次**（无障碍/打印渲染层），
+# 真公文页不会出现同一行连排 3 次以上。实测《发改委令第49号 对外投资管理办法》第 1 页 =
+# 发改委网站整页打印：140 行里 120 行属于「重复 4 次」的块，首页导航、成品油调价侧栏、
+# 页脚模板全混进来，会被切成条文进库、污染检索。判据用「重复块行数占比」而非关键词，
+# 只在**确实像网页打印件**的页生效 → 正常文档页一行不动。
+_FRAME_DUP_MIN = 3
+_FRAME_RATIO = 0.3
+_PROSE_PUNCT = re.compile(r"[，。；：、]")
+
+
+def _strip_site_frame(t: str) -> str:
+    """网页打印件页 → 去掉渲染层重复块，只剩像公文的行；普通页原样返回。"""
+    lines = [l.strip() for l in t.splitlines() if l.strip()]
+    if len(lines) < 20:
+        return t
+    runs: list[tuple[int, int]] = []
+    i = 0
+    while i < len(lines):
+        j = i + 1
+        while j < len(lines) and lines[j] == lines[i]:
+            j += 1
+        runs.append((i, j))
+        i = j
+    dup = sum(j - i for i, j in runs if j - i >= _FRAME_DUP_MIN)
+    if dup / len(lines) < _FRAME_RATIO:
+        return t
+    out = []
+    for i, j in runs:
+        if j - i >= _FRAME_DUP_MIN:          # 渲染层重复块（导航/标题/侧栏）整块丢
+            continue
+        line = lines[i]
+        # 残留的框架行：够长且有句读才留（真公文的「第X号令/附件：」这类短标签由
+        # 文件名与后续条文覆盖，丢了不影响入库）
+        if len(line) >= 8 and _PROSE_PUNCT.search(line):
+            out.append(line)
+    return "\n".join(out)
+
+
 def _ocr_coords(img_path: str) -> list[tuple]:
     """带坐标 OCR：每行 (x0,y0,x1,y1,text)，坐标归一化 0-1、原点左下。"""
     try:
@@ -1019,7 +1058,7 @@ def struck_text(pg, rect) -> str:
 
 def parse_pdf(p: Path) -> dict:
     doc = pymupdf.open(str(p))
-    pages = [page_text(pg) for pg in doc]
+    pages = [_strip_site_frame(page_text(pg)) for pg in doc]
     raw = canonic("\n".join(pages))
     dead = strikeouts(doc)
     is_ey = "Part B" in raw and "Part A" in raw

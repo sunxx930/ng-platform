@@ -84,6 +84,42 @@ def export(src: Path, out: Path) -> int:
         (d / f"{base}.md").write_text(fm + body + "\n", encoding="utf-8")
         n_files += 1
 
+    # 非税法规模（2026-10-30 加）：全篇无税种落点的法规（如《对外投资管理办法》）
+    # 进不了「按税种」主题层，此前会被无声地挡在交付之外。用户在 `_合并_语义/非税法规/`
+    # 放一份 `<主题>.md` 即可随库发布；这里同样导出到 `tax-regs/非税/`。
+    # ⚠ 该目录是**交付层**（不是 reg_semantic_topic 的产物）——后者每次 apply 会 rmtree
+    #   整棵「按税种」，所以非税件必须放在它的**同级**目录，才能跨重跑留存。
+    extra_dir = src.parent / "非税法规"
+    if extra_dir.is_dir():
+        e_files = sorted(extra_dir.glob("*.md"))
+        for f in e_files:
+            raw = f.read_text(encoding="utf-8")
+            if not raw.strip():
+                continue
+            topic = f.stem
+            lines = raw.splitlines()
+            body_lines = []
+            for i, ln in enumerate(lines):
+                if i == 0 and ln.startswith("# "):
+                    continue
+                if ln.startswith("- "):
+                    n_bullets_in += 1
+                    ln = _INTERNAL_MARKS.sub("", ln)
+                    n_bullets_out += 1
+                body_lines.append(ln)
+            body = "\n".join(body_lines).strip("\n")
+            d = dst_root / _clean_name("非税")
+            d.mkdir(parents=True, exist_ok=True)
+            fm = ("---\n"
+                  f"title: {topic}\n"
+                  "type: 法规\n"
+                  "tax: 非税\n"
+                  f"topic: {topic}\n"
+                  "---\n\n")
+            (d / f"{_clean_name(topic)}.md").write_text(fm + body + "\n", encoding="utf-8")
+            n_files += 1
+        print(f"  ✓ 非税法规 {len(e_files)} 份")
+
     print(f"  ✓ 导出 {n_files} 份主题文件")
     print(f"    条文行 {n_bullets_in} → {n_bullets_out}")
     print(f"    {dst_root}")
