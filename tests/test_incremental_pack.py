@@ -79,7 +79,8 @@ def test_full_install_then_delta_touches_one_shard(env):
     assert after["r-0000000000000001.enc"] == before["r-0000000000000001.enc"]
     assert after["r-0000000000000002.enc"] != before["r-0000000000000002.enc"]
 
-    V, metas = kb_semantic.load_index()
+    V, metas, Ven, metas_en = kb_semantic.load_index()
+    assert Ven is None and metas_en == []
     assert V.shape[0] == 2
     assert {m["snippet"] for m in metas} == {"第一条 甲", "第二条 乙改"}
 
@@ -94,7 +95,7 @@ def test_delta_removes_deleted_shard(env):
     res = updater._install_blob(d.read_bytes(), kb, "v2")
     assert res["installed_total"] == 1
     assert not (kb / "content/shards/r-0000000000000002.enc").exists()
-    _, metas = kb_semantic.load_index()
+    _, metas, _, _ = kb_semantic.load_index()
     assert [m["snippet"] for m in metas] == ["第一条 甲"]
 
 
@@ -103,7 +104,7 @@ def test_merge_dedupes_same_clause_across_shards(env):
     a = _pack(env / "v1.pack", "v1", {"r-0000000000000001": ["同一句条文"],
                                       "r-0000000000000002": ["同一句条文"]})
     updater._install_blob(a.read_bytes(), kb, "v1")
-    _, metas = kb_semantic.load_index()
+    _, metas, _, _ = kb_semantic.load_index()
     assert len(metas) == 1
 
 

@@ -5,6 +5,9 @@
     cases  案例库：tax-cases/*.md + index/ + models/embed|rerank
     regs   法规库：tax-regs/**/*.md + index/（不重复带模型）
 
+例外：`--models-from <models 根目录>` 可随任意包附带模型（新增模型要推给老客户时用，
+如 2026-10-31 的英文模型 embed-en）。客户端装了包就把 models/ 落盘，与包类型无关。
+
 包格式 v2（2026-10-21 起，用户「只更新受影响的部分」）：
     不再整包重发，而是**按源文件分片**。每个分片 = 一份 .md 的全部条目
     （index/shards/<id>.npz，由 kb_build_index.py 产出）。
@@ -90,9 +93,15 @@ def main():
     ap.add_argument("--manifest", default="", help="顺带更新的 update.json 路径")
     ap.add_argument("--url-base", default="https://ng-platform.ai/downloads",
                     help="包的公网地址前缀")
+    ap.add_argument("--models-from", action="append", default=[], metavar="DIR",
+                    help="随包附带的模型根目录（其下每个子目录=一种模型，如 embed-en/）；可重复")
     a = ap.parse_args()
 
     src, out = Path(a.src), Path(a.out)
+    models_src = [Path(x).expanduser() for x in a.models_from]
+    for d in models_src:
+        if not d.is_dir():
+            raise SystemExit(f"✗ --models-from 目录不存在: {d}")
     out.mkdir(parents=True, exist_ok=True)
     content_root = _CONTENT_ROOT[a.kind]
     all_shards = _shards(src)
@@ -129,7 +138,7 @@ def main():
             "shards": selected,
             "removed": removed,
             "total_after": len(all_shards),      # 装完后客户端应有这么多分片（防内容目录残缺）
-            "models": a.kind == "cases" and not base_info,
+            "models": bool(models_src) or (a.kind == "cases" and not base_info),
         }, ensure_ascii=False))
         for s in selected:
             zf.write(src / "index" / "shards" / f"{s['id']}.npz",
@@ -137,12 +146,15 @@ def main():
             f = src / content_root / s["path"]
             if f.is_file():                      # 分片在索引里、原文不在 → 只靠索引也能检索
                 zf.write(f, f"shards/{s['id']}/content/{content_root}/{s['path']}")
+        model_dirs = list(models_src)
         if a.kind == "cases" and not base_info:
-            d = src / "models"
-            if d.is_dir():
-                for f in sorted(d.rglob("*")):
-                    if f.is_file():
-                        zf.write(f, f"models/{f.relative_to(d).as_posix()}")
+            model_dirs.insert(0, src / "models")
+        for d in model_dirs:
+            if not d.is_dir():
+                continue
+            for f in sorted(d.rglob("*")):
+                if f.is_file():
+                    zf.write(f, f"models/{f.relative_to(d).as_posix()}")
 
     # 加密：包可以公开托管，没有授权里的密钥就是一堆乱码
     k = _pack_key()

@@ -3,8 +3,14 @@
 盘上布局（**内容永不落明文**，见 9/20 定案）：
     NG_HOME/knowledge/content/shards/<分片>.enc  每份源文件一个密文（v2，2026-10-21 起）
     NG_HOME/knowledge/content/<补丁>.enc         旧整包（v1，兼容读）
-    NG_HOME/knowledge/models/embed/        bge-small-zh-v1.5 (ONNX, 23MB)   ← 公开模型，落盘
-    NG_HOME/knowledge/models/rerank/       bge-reranker-base  (ONNX, 283MB) ← 公开模型，落盘
+    NG_HOME/knowledge/models/embed/        bge-small-zh-v1.5 (ONNX int8, 24MB)  ← 中文/默认
+    NG_HOME/knowledge/models/embed-en/     bge-small-en-v1.5 (ONNX int8, 32MB)  ← 英文条目（2026-10-31 起）
+    NG_HOME/knowledge/models/rerank/       bge-reranker-base  (ONNX, 283MB)     ← 公开模型，落盘
+
+**双语索引**：中文法规用 embed（512 维），英文条目（EY 指南等）用 embed-en（384 维），
+建索引时按文件语言分流，检索时按**查询语言**选模型（见 search）。中文查询只走 embed，
+行为与加英文模型前逐字节一致；纯英文查询走 embed-en，中文模型对英文无能为力
+（"VAT rate in Germany" 目标块排到 1,700 名外，2026-10-31 实测）。
 
 补丁（案例库/法规库）各自独立，检索时**在内存解密**并合并打分；
 客户机器上不出现 tax-cases/*.md、index/meta.jsonl 这类明文正文。
@@ -22,11 +28,11 @@ import os
 import re
 from pathlib import Path
 
-# bge 检索任务的标准查询指令（文档侧不加）
+# bge 检索任务的标准查询指令（文档侧不加）；中英文各一句，不能混用
 _QUERY_PREFIX = "为这个句子生成表示以用于检索相关文章："
+_QUERY_PREFIX_EN = "Represent this sentence for searching relevant passages:"
 
-_embed_sess = _embed_tok = None
-_rerank_sess = _rerank_tok = None
+_sess_cache: dict[str, tuple] = {}
 
 
 def kb_dir() -> Path:
@@ -111,14 +117,14 @@ def _load(kind: str):
 
 
 def _sess(kind: str):
-    global _embed_sess, _embed_tok, _rerank_sess, _rerank_tok
-    if kind == "embed":
-        if _embed_sess is None:
-            _embed_sess, _embed_tok = _load("embed")
-        return _embed_sess, _embed_tok
-    if _rerank_sess is None:
-        _rerank_sess, _rerank_tok = _load("rerank")
-    return _rerank_sess, _rerank_tok
+    if kind not in _sess_cache:
+        _sess_cache[kind] = _load(kind)
+    return _sess_cache[kind]
+
+
+def en_available() -> bool:
+    """英文嵌入模型在不在（bge-small-en-v1.5）。缺它时英文条目只能靠中文模型 + 双语标签命中。"""
+    return _has_model("embed-en")
 
 
 def _run(sess, tok, texts, pairs=False):
@@ -133,12 +139,14 @@ def _run(sess, tok, texts, pairs=False):
     return sess.run(None, feeds)[0], mask
 
 
-def embed(texts: list[str], is_query: bool = False) -> list[list[float]]:
-    """均值池化 + L2 归一化（bge 的标准用法）。"""
+def embed(texts: list[str], is_query: bool = False, lang: str = "zh") -> list[list[float]]:
+    """均值池化 + L2 归一化（bge 的标准用法）。lang="en" 走英文模型（384 维）。"""
     import numpy as np
-    sess, tok = _sess("embed")
+    kind = "embed-en" if lang == "en" else "embed"
+    sess, tok = _sess(kind)
     if is_query:
-        texts = [_QUERY_PREFIX + t for t in texts]
+        pre = _QUERY_PREFIX_EN if lang == "en" else _QUERY_PREFIX
+        texts = [pre + t for t in texts]
     out, mask = _run(sess, tok, texts)
     m = mask[..., None].astype(np.float32)
     v = (out * m).sum(1) / np.clip(m.sum(1), 1e-9, None)
@@ -163,10 +171,13 @@ def reset_index_cache() -> None:
 
 
 def load_index():
-    """返回 (向量矩阵, 元信息列表)——**在内存解密**，不落明文盘。
+    """返回 (中文矩阵, 中文元信息, 英文矩阵, 英文元信息)——**在内存解密**，不落明文盘。
 
     每个补丁（案例/法规）各是一个密文 zip，内含 index/vec.npy + index/meta.jsonl。
     多个补丁的向量按行拼接，检索时一起算分。
+
+    英文条目（meta 里 `lang == "en"`，由 kb_build_index 按文件语言分流）用另一个模型
+    嵌入（384 维），单独成矩阵返回；中英文维度不同，**绝不能拼一起**。
     """
     global _index_cache
     if _index_cache is not None:
@@ -185,7 +196,7 @@ def load_index():
     if not key:
         raise RuntimeError("无授权/试用密钥，无法解开内容补丁")
 
-    Vs, metas, bad = [], [], []
+    Vs, metas, Ven, metas_en, bad = [], [], [], [], []
     sd = shards_dir()
     for p in packs:
         try:
@@ -196,35 +207,53 @@ def load_index():
                     z = _np.load(_io.BytesIO(zf.read("index.npz")))
                     V = z["vec"]
                     raw = bytes(z["meta"]).decode("utf-8")
-                    metas += [json.loads(l) for l in raw.splitlines() if l.strip()]
+                    ms = [json.loads(l) for l in raw.splitlines() if l.strip()]
             else:                           # v1 整包：index/vec.npy + index/meta.jsonl
                 with _zip.ZipFile(_io.BytesIO(plain)) as zf:
                     V = _np.load(_io.BytesIO(zf.read("index/vec.npy")))
-                    metas += [json.loads(l) for l in
-                              zf.read("index/meta.jsonl").decode("utf-8").splitlines() if l.strip()]
-            Vs.append(V)
+                    ms = [json.loads(l) for l in
+                          zf.read("index/meta.jsonl").decode("utf-8").splitlines() if l.strip()]
+            # 分片按文件切，一个分片内语言一致；老分片没有 lang 字段 → 中文
+            if ms and ms[0].get("lang") == "en":
+                Ven.append(V)
+                metas_en += ms
+            else:
+                Vs.append(V)
+                metas += ms
         except Exception as e:      # noqa: BLE001
             # 单个补丁坏了不该把整个检索拖垮；但要**响亮地**报出来（免得内容静默缺失）
             bad.append(f"{p.name}: {e}")
             print(f"[kb] ⚠ 补丁加载失败，已跳过：{p.name} —— {e}", flush=True)
-    if not Vs:
+    if not Vs and not Ven:
         raise RuntimeError(f"全部内容补丁都加载失败: {bad}")
-    M = _np.vstack(Vs).astype(_np.float32) if len(Vs) > 1 else Vs[0].astype(_np.float32)
-    # 分片按源文件切，同一句条文可能同时挂在多个主题（跨文件重复）→ 合并时按正文去重。
-    # 放在这里而不是建索引时：否则另一份文件变化时，本文件里被去重掉的那条会凭空消失。
-    seen: set[str] = set()
-    keep: list[int] = []
-    for i, m in enumerate(metas):
-        s = m.get("snippet")
-        if s in seen:
-            continue
-        seen.add(s)
-        keep.append(i)
-    if len(keep) < len(metas):
-        M = M[_np.asarray(keep)]
-        metas = [metas[i] for i in keep]
-    _index_cache = (M, metas)
+
+    def _merge(vecs, ms):
+        if not vecs:
+            return None, []
+        M = _np.vstack(vecs).astype(_np.float32) if len(vecs) > 1 else vecs[0].astype(_np.float32)
+        # 分片按源文件切，同一句条文可能同时挂在多个主题（跨文件重复）→ 合并时按正文去重。
+        # 放在这里而不是建索引时：否则另一份文件变化时，本文件里被去重掉的那条会凭空消失。
+        seen: set[str] = set()
+        keep: list[int] = []
+        for i, m in enumerate(ms):
+            s = m.get("snippet")
+            if s in seen:
+                continue
+            seen.add(s)
+            keep.append(i)
+        if len(keep) < len(ms):
+            M = M[_np.asarray(keep)]
+            ms = [ms[i] for i in keep]
+        return M, ms
+
+    Mzh, mzh = _merge(Vs, metas)
+    Men, men = _merge(Ven, metas_en)
+    _index_cache = (Mzh, mzh, Men, men)
     return _index_cache
+
+
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text or "")
 
 
 def gate_reason() -> str | None:
@@ -243,6 +272,7 @@ def search(query: str, topn: int = 3, recall: int = 20) -> list[dict]:
     """语义检索：召回 recall 条 →（有重排模型时）精排取 topn。返回体与 kb.search 一致。
 
     没有重排模型（小包形态）时退化为纯语义 top-n，score 即余弦相似度。
+    纯英文查询有英文模型时只召回英文条目（没有重排也照样可用，见下方 en_ready）。
     """
     import numpy as np
     # 授权闸门：试用到期/未激活 → 税务库整体不可用（内容密钥不下发）
@@ -258,15 +288,32 @@ def search(query: str, topn: int = 3, recall: int = 20) -> list[dict]:
     if reason:
         print(f"[kb] 案例库不可用：{reason}", flush=True)
         return []
-    V, meta = load_index()
-    qv = np.array(embed([query], is_query=True)[0], dtype=np.float32)
-    sims = V @ qv
-    order = np.argsort(-sims)[:recall]
-    cand = [meta[i] for i in order]
-    if rerank_available():
+    V, meta, Ven, meta_en = load_index()
+    # 中文查询**一律只走中文模型**：英文模型把中文查询映射成随机向量，混进来只会干扰
+    # （中文查到英文条目的路是条目自带的「英文名｜国名（中文国名）」标签，见 reg_foreign_guide）。
+    en_ready = (not _has_cjk(query)) and Ven is not None and bool(meta_en) and en_available()
+    have_rerank = rerank_available()
+    cand: list[dict] = []
+    scores: list[float] = []
+    if en_ready:
+        qe = np.array(embed([query], is_query=True, lang="en")[0], dtype=np.float32)
+        se = Ven @ qe
+        oe = np.argsort(-se)[:recall]
+        cand += [meta_en[i] for i in oe]
+        scores += list(map(float, se[oe]))
+    # 有重排时要两组候选一起交给重排（中英余弦分不可比，只有重排能统一打分）；
+    # 没重排时中英各排各的，英文查询就不掺中文候选——两组余弦差一个量级，混排没有意义。
+    if V is not None and meta and (not en_ready or have_rerank):
+        qv = np.array(embed([query], is_query=True)[0], dtype=np.float32)
+        sims = V @ qv
+        order = np.argsort(-sims)[:recall]
+        cand += [meta[i] for i in order]
+        if not have_rerank:
+            scores += list(map(float, sims[order]))
+    if not cand:
+        return []
+    if have_rerank:
         scores = rerank(query, [c["snippet"] for c in cand])
-    else:
-        scores = [float(sims[i]) for i in order]
     ranked = sorted(zip(scores, cand), key=lambda x: -x[0])[:topn]
     out = []
     for sc, c in ranked:

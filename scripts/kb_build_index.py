@@ -68,6 +68,19 @@ def chunks_of(path: Path) -> list[tuple[str, str]]:
     return out
 
 
+def _is_en(raw: str) -> bool:
+    """按正文语言分流：中日韩字符占比 <2% 且有拉丁字母 → 英文条目（走 embed-en）。
+
+    2026-10-31 加：EY 全球指南这类英文大部头用中文模型嵌入等于随机向量
+    （"VAT rate in Germany" 目标块排到 1,700 名外），必须换成英文模型。
+    口径宽松即可：中文法规即使夹英文条款（税率表、英文缩写）也远高于 2%。
+    """
+    body = re.sub(r"^---\n.*?\n---\n", "", raw, flags=re.S)
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", body))
+    latin = len(re.findall(r"[A-Za-z]", body))
+    return latin > 0 and cjk / max(cjk + latin, 1) < 0.02
+
+
 def _fm(meta_text: str, key: str) -> str:
     for ln in meta_text.splitlines()[:12]:
         if ln.strip().startswith(key + ":"):
@@ -144,25 +157,33 @@ def build(kb_dir: Path, kind: str = "cases", no_cache: bool = False) -> int:
     _prefix = "r-" if kind == "regs" else "c-"
 
     import numpy as np
-    vec_blocks: list = []
+    vec_blocks: list = []                   # 中文：bge-small-zh（512 维）
     metas: list[dict] = []
+    vec_blocks_en: list = []                # 英文：bge-small-en（384 维），与中文分开存
+    metas_en: list[dict] = []
     seen: set[str] = set()                  # 法规库跨主题重复条文去重（同一句在一份文档的多个主题里出现）
+    seen_en: set[str] = set()
     dtype = np.float16 if kind == "regs" else np.float32
 
     # 向量缓存：同一句正文的向量与文件无关，已有索引里的向量可直接复用。
     # 加一批新法规只欠新条文那几百条推理，不必把 3 万多条全部重算（--no-cache 可强制全算；
     # 换模型时必须 --no-cache）。
+    # 缓存分中文/英文两套（两个模型维度不同，绝不能混用）
     cache: dict[str, "np.ndarray"] = {}
-    if not no_cache and (idx / "vec.npy").is_file() and (idx / "meta.jsonl").is_file():
+    cache_en: dict[str, "np.ndarray"] = {}
+    for _vec, _meta, _c in ((idx / "vec.npy", idx / "meta.jsonl", cache),
+                            (idx / "vec-en.npy", idx / "meta-en.jsonl", cache_en)):
+        if no_cache or not (_vec.is_file() and _meta.is_file()):
+            continue
         try:
-            V0 = np.load(idx / "vec.npy")
-            for i, ln in enumerate((idx / "meta.jsonl").read_text(encoding="utf-8").splitlines()):
+            V0 = np.load(_vec)
+            for i, ln in enumerate(_meta.read_text(encoding="utf-8").splitlines()):
                 if ln.strip():
-                    cache.setdefault(json.loads(ln)["snippet"], V0[i])
-            print(f"  复用已有向量 {len(cache)} 条（新条文才走模型）")
+                    _c.setdefault(json.loads(ln)["snippet"], V0[i])
         except Exception as e:      # noqa: BLE001
             print(f"  ⚠ 已有索引读不了（{e}），全量重算")
-            cache = {}
+            _c.clear()
+    print(f"  复用已有向量 中文 {len(cache)} 条 / 英文 {len(cache_en)} 条（新条文才走模型）")
 
     written: set[str] = set()
     for f in files:
@@ -175,12 +196,15 @@ def build(kb_dir: Path, kind: str = "cases", no_cache: bool = False) -> int:
             continue
         # 只算缓存里没有的条文；分批推理（单个主题文件可能含上万条，如协定 HS 表，
         # 一次喂给 ONNX 会爆内存）
-        todo = list(dict.fromkeys(c[1] for c in ch if c[1] not in cache))
+        en = _is_en(raw)
+        _cache = cache_en if en else cache
+        lang = "en" if en else "zh"
+        todo = list(dict.fromkeys(c[1] for c in ch if c[1] not in _cache))
         for i in range(0, len(todo), 64):
             batch = todo[i:i + 64]
-            for t, v in zip(batch, embed(batch)):
-                cache[t] = np.asarray(v, dtype=dtype)
-        embs = [cache[c[1]] for c in ch]
+            for t, v in zip(batch, embed(batch, lang=lang)):
+                _cache[t] = np.asarray(v, dtype=dtype)
+        embs = [_cache[c[1]] for c in ch]
 
         def _meta(title: str, text: str) -> dict:
             # 交付版字段：**不含 source / 原件名 / 指纹**
@@ -188,6 +212,8 @@ def build(kb_dir: Path, kind: str = "cases", no_cache: bool = False) -> int:
                     "topic": _fm(meta_text, "topic"), "snippet": text}
             if kind == "regs" and _fm(meta_text, "tax"):
                 meta["tax"] = _fm(meta_text, "tax")
+            if en:
+                meta["lang"] = "en"     # 运行时按它选英文模型算分
             return meta
 
         # 1) 分片（文件全量，供增量更新）：id 由路径定，hash 由内容定
@@ -206,15 +232,15 @@ def build(kb_dir: Path, kind: str = "cases", no_cache: bool = False) -> int:
         rows, kept = [], 0
         for (title, text), v in zip(ch, embs):
             if kind == "regs":
-                if text in seen:
+                if text in (seen_en if en else seen):
                     continue
-                seen.add(text)
-            metas.append(_meta(title, text))
+                (seen_en if en else seen).add(text)
+            (metas_en if en else metas).append(_meta(title, text))
             rows.append(v)
             kept += 1
         if rows:
-            vec_blocks.append(np.asarray(rows, dtype=dtype))
-        print(f"  {rel[:52]:54} {len(ch):3} 块" + (f" → {kept}" if kept != len(ch) else ""))
+            (vec_blocks_en if en else vec_blocks).append(np.asarray(rows, dtype=dtype))
+        print(f"  {rel[:52]:54} {len(ch):3} 块" + (f" → {kept}" if kept != len(ch) else "") + ("  [en]" if en else ""))
 
     # 源文件被删/重命名 → 清掉它的旧分片，否则增量包还会一直带着它
     for p in shards_dir.glob("*.npz"):
@@ -222,13 +248,25 @@ def build(kb_dir: Path, kind: str = "cases", no_cache: bool = False) -> int:
             p.unlink()
 
     # 法规库块数大（~3.5 万），float16 存储把 vec.npy 减半；运行时 load_index 会转 float32
-    V = np.vstack(vec_blocks)
+    V = np.vstack(vec_blocks) if vec_blocks else np.zeros((0, 512), dtype)
     np.save(idx / "vec.npy", V)
     (idx / "meta.jsonl").write_text(
         "\n".join(json.dumps(x, ensure_ascii=False) for x in metas),
         encoding="utf-8",
     )
-    print(f"\n  ✓ 索引完成: {len(files)} 份 → {len(metas)} 块, 维度 {V.shape[1]}")
+    Ven = np.vstack(vec_blocks_en) if vec_blocks_en else None
+    if Ven is not None:
+        np.save(idx / "vec-en.npy", Ven)
+        (idx / "meta-en.jsonl").write_text(
+            "\n".join(json.dumps(x, ensure_ascii=False) for x in metas_en),
+            encoding="utf-8",
+        )
+    else:                                   # 没有英文条目 → 清掉旧产物，免得留着上一版
+        for f in (idx / "vec-en.npy", idx / "meta-en.jsonl"):
+            if f.is_file():
+                f.unlink()
+    print(f"\n  ✓ 索引完成: {len(files)} 份 → 中文 {len(metas)} 块（{V.shape[1]} 维）"
+          + (f" + 英文 {len(metas_en)} 块（{Ven.shape[1]} 维）" if Ven is not None else ""))
     print(f"    {idx/'vec.npy'}  {V.nbytes/1e6:.1f} MB")
     print(f"    {idx/'meta.jsonl'}")
     print(f"    {shards_dir}  {len(list(shards_dir.glob('*.npz')))} 个分片（增量更新用）")
@@ -242,8 +280,20 @@ def check(kb_dir: Path, kind: str = "cases") -> int:
     metas = [json.loads(l) for l in (idx / "meta.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
     print(f"vec.npy    {V.shape}  dtype={V.dtype}")
     print(f"meta.jsonl {len(metas)} 条")
+    bad: list[str] = []
+    # 英文条目单独一套（384 维，见双语索引说明）；没有英文条目时这两个文件不存在
+    if (idx / "vec-en.npy").is_file():
+        Ven = np.load(idx / "vec-en.npy")
+        men = [json.loads(l) for l in (idx / "meta-en.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+        print(f"vec-en.npy {Ven.shape}  dtype={Ven.dtype}  meta-en {len(men)} 条")
+        if Ven.shape[0] != len(men):
+            print("⚠ vec-en 行数与 meta-en 条数不一致")
+            bad.append("vec-en.rows")
+        if men and men[0].get("lang") != "en":
+            print("⚠ meta-en 里没有 lang=en 标记，客户端会把它当中文块")
+            bad.append("meta-en.lang")
     # 交付版不该带这些字段
-    bad = sorted({k for m in metas for k in m if k in ("source", "source_sha256", "ingested", "extract", "sensitivity")})
+    bad += sorted({k for m in metas for k in m if k in ("source", "source_sha256", "ingested", "extract", "sensitivity")})
     print(f"泄漏字段   {bad or '无 ✓'}")
     # 代号残留（只对案例库有意义；法规原文里的「A公司」不是脱敏泄漏）
     codes: list[str] = []
