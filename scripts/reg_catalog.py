@@ -89,8 +89,15 @@ def parse(lines: list[str], prov_fallback: str = "") -> list[dict]:
 
 
 def render(rows: list[dict], title: str) -> str:
-    """每个「分部 / 省份」一个 `##` 组（索引按组切块，组名进检索结果），
-    组内条目自带大类/小类前缀 —— 一个 600 字块常从半截开始，前缀保证单条可读。"""
+    """每个「分部 / 省份」一个 `##` 组，组内每行都带**归属标签**：
+
+        - 全国鼓励外商投资产业目录 · 一、农、林、牧、渔业｜1.木本油料…
+        - 山西省鼓励外商投资优势产业 · 12.汽车零部件制造…
+
+    ⚠ 标签必须逐行带：`kb_build_index` 只用条目正文做嵌入与重排，`##` 组名
+    只进元信息、不入向量；一个 600 字的块也常从组中间开始。只把省名放在组名里
+    时，「山西省 鼓励外商投资优势产业」这种按省查询一条都命中不了——重排模型给
+    裸清单打 0.8 分，带标签 9.0 分（2026-10-30 实测）。"""
     out = [f"# 非税 · {title}", ""]
     last = None
     for r in rows:
@@ -102,11 +109,13 @@ def render(rows: list[dict], title: str) -> str:
                 head = r["part"] or "目录"
             out += [f"## {head}", ""]
             last = grp
-        ctx = [x for x in (r["major"], r["minor"]) if x]
         if r["prov"]:
-            ctx = []                      # 省份已在组名里
+            tag = f"{re.sub(r'（[^）]*）', '', r['prov'])}鼓励外商投资优势产业"
+        else:
+            tag = r["part"] or "目录"
+        ctx = [x for x in (r["major"], r["minor"]) if x]
         body = f"{r['num']}.{r['text']}"
-        out.append(f"- {'｜'.join(ctx + [body]) if ctx else body}")
+        out.append(f"- {tag} · {'｜'.join(ctx + [body])}")
     out.append("")
     return "\n".join(out)
 
