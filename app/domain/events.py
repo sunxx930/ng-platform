@@ -17,6 +17,8 @@ class EventType(str, Enum):
     REVIEW_REQUESTED = "review.requested"
     REVIEW_DECIDED = "review.decided"
     APPROVAL_REQUESTED = "approval.requested"
+    APPROVAL_SIGNERS_SET = "approval.signers_set"   # 审批会签：设置/调整会签人（未签字前）
+    APPROVAL_SIGNED = "approval.signed"             # 审批会签：单个会签人签署
     APPROVAL_DECIDED = "approval.decided"
     HANDOVER_CREATED = "handover.created"
     AGENT_ASSIGNED = "agent.assigned"

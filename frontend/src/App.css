@@ -183,6 +183,20 @@ select.advance { background: var(--bg-soft); border: 1px solid var(--line); colo
 .ap-scope { color: var(--muted); }
 .ap-result { margin-left: auto; color: var(--ok); }
 
+/* 会签 */
+.cs-global { border: 1px solid rgba(245,158,11,.35); background: rgba(245,158,11,.05); border-radius: var(--radius-sm); padding: 8px 12px; margin-bottom: 12px; }
+.cs-global h2 { margin: 4px 0 8px; font-size: 15px; }
+.cs-global .ap-row { padding: 8px 2px; flex-wrap: wrap; }
+.cs-signers { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.cs-chip { border: 1px solid var(--line-2); border-radius: 20px; padding: 1px 8px; color: var(--muted); white-space: nowrap; }
+.cs-chip.done { color: var(--ok); border-color: rgba(52,211,153,.45); background: rgba(52,211,153,.08); }
+.cs-chip.rej { color: var(--danger); border-color: rgba(248,113,113,.45); background: rgba(248,113,113,.08); }
+.cs-chip.wait { color: var(--dim); border-style: dashed; }
+.cs-progress { color: var(--muted); }
+.cs-form { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.cs-form input { flex: 1; min-width: 160px; font-size: 12px; padding: 4px 8px; }
+.cs-form select { font-size: 12px; }
+
 .muted { color: var(--muted); }
 
 /* 审计 */

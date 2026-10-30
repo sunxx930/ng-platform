@@ -496,6 +496,9 @@ def _derive_task_context(events_iter, task_id) -> dict:
 _NOTIFY_EVENTS = {
     events.EventType.TASK_STATE_CHANGED.value,
     events.EventType.REVIEW_DECIDED.value,
+    events.EventType.APPROVAL_REQUESTED.value,   # 会签：轮到签署
+    events.EventType.APPROVAL_SIGNERS_SET.value, # 会签：增设/调整会签人
+    events.EventType.APPROVAL_SIGNED.value,      # 会签：签署进度
     events.EventType.APPROVAL_DECIDED.value,
     events.EventType.AGENT_EXECUTION_FAILED.value,
     events.EventType.TASK_STALLED.value,     # v1.1.1：悬空任务要能通知到人
@@ -510,33 +513,58 @@ def _notify_summary(event: dict) -> str:
         return f"任务状态 → {p.get('to', '?')}"
     if et == events.EventType.REVIEW_DECIDED.value:
         return f"复核结论: {p.get('verdict', '?')}"
+    if et == events.EventType.APPROVAL_REQUESTED.value:
+        if p.get("signers"):
+            return f"会签请求（{len(p['signers'])} 人）：{p.get('scope', '')}"
+        return f"审批请求：{p.get('scope', '')}"
+    if et == events.EventType.APPROVAL_SIGNERS_SET.value:
+        return (f"会签人已设置（{len(p.get('signers') or [])} 人）："
+                f"{'、'.join(p.get('signers') or [])}")
+    if et == events.EventType.APPROVAL_SIGNED.value:
+        return (f"会签：{p.get('signer', '?')} "
+                f"{'已同意' if p.get('result') == 'approve' else '已驳回'}")
     if et == events.EventType.APPROVAL_DECIDED.value:
         return f"审批: {'已批准' if p.get('result') == 'approve' else '已拒绝'}"
     return ""
 
 
-def _derive_notifications(events_iter, viewer_user_id) -> list[dict]:
-    """从事件派生当前用户的通知（按项目 owner 隔离）。
+def _derive_notifications(events_iter, viewer_user_id,
+                          viewer_name: str | None = None) -> list[dict]:
+    """从事件派生当前用户的通知（按项目 owner 隔离；会签人额外可见）。
 
-    项目归属 = project.created 事件的 user_id；只收 viewer 拥有的项目里
-    的状态变化/复核/审批事件。返回按 ts 倒序、最近 20 条。
+    项目归属 = project.created 事件的 user_id；收 viewer 拥有项目里的状态变化/
+    复核/审批事件。会签人即使不是项目 owner，也能收到自己被指派的审批事件。
+    返回按 ts 倒序、最近 20 条。
     """
+    evs = list(events_iter)
     owner_of: dict[str, str] = {}     # project_id → owner user_id
-    for e in events_iter:
+    signers_of: dict[str, list[str]] = {}
+    for e in evs:
         if e["event_type"] == events.EventType.PROJECT_CREATED.value \
                 and e.get("user_id"):
             owner_of[e["project_id"]] = e["user_id"]
+        elif e["event_type"] in (events.EventType.APPROVAL_REQUESTED.value,
+                                 events.EventType.APPROVAL_SIGNERS_SET.value):
+            p = e.get("payload") or {}
+            aid = p.get("approval_id")
+            if aid:
+                signers_of[aid] = _parse_signers(p.get("signers"))
     out = []
-    for e in events_iter:
+    for e in evs:
         if e["event_type"] not in _NOTIFY_EVENTS:
             continue
         pid = e.get("project_id")
-        if viewer_user_id is not None and owner_of.get(pid) != viewer_user_id:
+        is_owner = viewer_user_id is None or owner_of.get(pid) == viewer_user_id
+        aid = (e.get("payload") or {}).get("approval_id")
+        is_signer = bool(viewer_name and aid
+                         and viewer_name in signers_of.get(aid, []))
+        if not is_owner and not is_signer:
             continue
         out.append({
             "event_type": e["event_type"],
             "project_id": pid,
             "task_id": e.get("task_id"),
+            "approval_id": aid,
             "summary": _notify_summary(e),
             "ts": e.get("created_at_ts", 0),
         })
@@ -546,9 +574,10 @@ def _derive_notifications(events_iter, viewer_user_id) -> list[dict]:
 
 @app.get("/notifications")
 def get_notifications(auth: dict = Depends(require_auth)):
-    """当前用户的通知（事件派生，按项目 owner 隔离）。"""
+    """当前用户的通知（事件派生，按项目 owner 隔离 + 会签人可见）。"""
     require_level("read_project", auth["level"])
-    return {"notifications": _derive_notifications(log.replay(), auth.get("user_id"))}
+    return {"notifications": _derive_notifications(
+        log.replay(), auth.get("user_id"), auth["user"])}
 
 
 # ---------- 项目 ----------
@@ -1230,6 +1259,288 @@ async def pending_approval_handler(request: Request, exc: PendingApproval):
         "detail": str(exc), "approval_id": exc.approval_id, "scope": exc.scope})
 
 
+# ---------- 审批会签（2026-10-30） ----------
+# 会签 = 一个审批请求指定多名会签人，全部签署同意才通过（rule=all）；
+# rule=any 为或签（任一同意即通过）。每个签署落 approval.signed（审计正源），
+# 达到终态时由系统补一条 approval.decided，后续任务状态联动与单人审批完全一致。
+_COUNTERSIGN_MAX = 20
+
+
+def _normalize_rule(rule: str | None) -> str:
+    r = (rule or "all").strip().lower()
+    if r in {"all", "会签", "全部", "joint"}:
+        return "all"
+    if r in {"any", "或签", "任一", "either"}:
+        return "any"
+    raise HTTPException(400, f"未知会签规则: {rule}（可选 all=全部同意 / any=任一同意）")
+
+
+def _parse_signers(raw) -> list[str]:
+    """会签人：逗号分隔字符串（兼容中文逗号/顿号）→ 去重保序列表。"""
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        parts = [str(x) for x in raw]
+    else:
+        parts = str(raw).replace("，", ",").replace("、", ",").split(",")
+    out: list[str] = []
+    for p in parts:
+        name = p.strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _known_identities() -> set[str]:
+    """可担任会签人的身份：注册用户 + 服务器静态 token 身份（admin/agent）。"""
+    names = {user for user, _level in authmod.TOKENS.values()}
+    store = authmod.user_store
+    if store is not None:
+        try:
+            names |= {u["username"] for u in store.list_users()}
+        except Exception:
+            pass
+    return names
+
+
+def _validate_signers(signers: list[str]) -> list[str]:
+    if not signers:
+        raise HTTPException(400, "会签人不能为空")
+    if len(signers) > _COUNTERSIGN_MAX:
+        raise HTTPException(400, f"会签人最多 {_COUNTERSIGN_MAX} 人")
+    unknown = [s for s in signers if s not in _known_identities()]
+    if unknown:
+        raise HTTPException(400, f"会签人不存在：{', '.join(unknown)}（须先注册账号）")
+    return signers
+
+
+def _approval_index(evs) -> dict[str, dict]:
+    """把审批相关事件折叠成 {approval_id: 状态}（会签人/签署记录/终态）。"""
+    idx: dict[str, dict] = {}
+    for e in evs:
+        et = e.get("event_type")
+        p = e.get("payload") or {}
+        aid = p.get("approval_id")
+        if not aid:
+            continue
+        if et == events.EventType.APPROVAL_REQUESTED.value:
+            idx[aid] = {
+                "approval_id": aid,
+                "project_id": e.get("project_id"),
+                "task_id": e.get("task_id"),
+                "scope": p.get("scope", ""),
+                "signers": _parse_signers(p.get("signers")),
+                "rule": p.get("rule") or "all",
+                "initiator": p.get("initiator"),
+                "requested_ts": e.get("created_at_ts", 0),
+                "signatures": [],
+                "decision": None,
+            }
+        elif et == events.EventType.APPROVAL_SIGNERS_SET.value and aid in idx:
+            idx[aid]["signers"] = _parse_signers(p.get("signers"))
+            idx[aid]["rule"] = p.get("rule") or "all"
+        elif et == events.EventType.APPROVAL_SIGNED.value and aid in idx:
+            idx[aid]["signatures"].append({
+                "signer": p.get("signer"),
+                "result": p.get("result"),
+                "opinion": p.get("opinion", ""),
+                "ts": e.get("created_at_ts", 0),
+                "user_id": e.get("user_id"),
+            })
+        elif et == events.EventType.APPROVAL_DECIDED.value and aid in idx:
+            idx[aid]["decision"] = e
+    return idx
+
+
+def _approval_progress(a: dict) -> dict:
+    total = len(a["signers"])
+    by = {s["signer"]: s for s in a["signatures"] if s.get("signer")}
+    return {
+        "total": total,
+        "signed": sum(1 for s in a["signers"] if s in by),
+        "approved": sum(1 for s in by.values() if s.get("result") == "approve"),
+        "rejected": sum(1 for s in by.values() if s.get("result") == "reject"),
+        "pending": [s for s in a["signers"] if s not in by],
+    }
+
+
+def _evaluate_countersign(a: dict) -> str | None:
+    """按规则判断会签是否到终态：None=未完成，'approve'/'reject'=终态。"""
+    signers = a["signers"]
+    if not signers:
+        return None
+    by = {s["signer"]: s.get("result") for s in a["signatures"] if s.get("signer")}
+    if a.get("rule") == "any":
+        if any(r == "approve" for r in by.values()):
+            return "approve"
+        if all(s in by for s in signers):
+            return "reject"
+        return None
+    # 会签（全部同意）：任一驳回立即否决；全部签署同意才通过
+    if any(r == "reject" for r in by.values()):
+        return "reject"
+    if all(by.get(s) == "approve" for s in signers):
+        return "approve"
+    return None
+
+
+def _finalize_countersign(a: dict, result: str):
+    """会签达到终态 → 补 approval.decided（系统），并联动任务状态。幂等键按 approval 固定。"""
+    aid = a["approval_id"]
+    log.append(events.new_event(
+        events.EventType.APPROVAL_DECIDED, "system",
+        {"approval_id": aid, "result": result, "scope": a.get("scope", ""),
+         "countersign": True},
+        project_id=a.get("project_id"), task_id=a.get("task_id"),
+        idempotency_key=f"approval:dec:{aid}"))
+    if a.get("task_id"):
+        _apply_approval_outcome(a["task_id"], a.get("project_id"), result)
+
+
+def _apply_signers(a: dict, signers: list[str], rule: str, auth: dict) -> bool:
+    """设置/调整会签人（仅未签字、未终态时允许）。返回是否有变更。"""
+    if a.get("decision") is not None:
+        raise HTTPException(400, "审批已有结论，不能再设置会签人")
+    if a.get("signatures"):
+        raise HTTPException(400, "已有人签署，不能再调整会签人")
+    if a.get("signers") == signers and a.get("rule") == rule:
+        return False
+    digest = hashlib.sha256(
+        (",".join(signers) + "|" + rule).encode()).hexdigest()[:10]
+    log.append(events.new_event(
+        events.EventType.APPROVAL_SIGNERS_SET, f"user:{auth['user']}",
+        {"approval_id": a["approval_id"], "signers": signers, "rule": rule},
+        project_id=a.get("project_id"), task_id=a.get("task_id"),
+        user_id=auth.get("user_id"),
+        idempotency_key=f"approval:signers:{a['approval_id']}:{digest}"))
+    a["signers"] = signers
+    a["rule"] = rule
+    return True
+
+
+def _approval_item(a: dict, viewer: str) -> dict:
+    """会签列表项（给签署人看的最小上下文）。"""
+    by = {s["signer"]: s for s in a["signatures"] if s.get("signer")}
+    return {
+        "approval_id": a["approval_id"],
+        "project_id": a.get("project_id"),
+        "task_id": a.get("task_id"),
+        "scope": a.get("scope", ""),
+        "signers": a["signers"],
+        "rule": a.get("rule") or "all",
+        "initiator": a.get("initiator"),
+        "signatures": [
+            {"signer": s, "result": by[s]["result"],
+             "opinion": by[s].get("opinion", ""), "ts": by[s].get("ts", 0)}
+            for s in a["signers"] if s in by
+        ],
+        "progress": _approval_progress(a),
+        "my_signature": by.get(viewer, {}).get("result"),
+        "status": (a["decision"]["payload"].get("result")
+                   if a.get("decision") else "pending"),
+        "requested_ts": a.get("requested_ts", 0),
+    }
+
+
+@app.get("/users")
+def list_users(auth: dict = Depends(require_auth)):
+    """用户名单（会签人选人；L3）。只返回用户名/级别，不含密码哈希。"""
+    require_level("approve_action", auth["level"])
+    users: dict[str, dict] = {}
+    if user_store is not None:
+        for u in user_store.list_users():
+            users[u["username"]] = {"username": u["username"],
+                                   "level": u.get("level", 1), "static": False}
+    for user, level in authmod.TOKENS.values():
+        users.setdefault(user, {"username": user, "level": level, "static": True})
+    return {"users": sorted(users.values(), key=lambda u: u["username"])}
+
+
+@app.get("/approvals/pending")
+def pending_countersigns(auth: dict = Depends(require_auth)):
+    """我的会签：当前用户被指定为会签人、尚未有终态的审批（跨项目）。"""
+    me = auth["user"]
+    evs = log.replay()
+    idx = _approval_index(evs)
+    project_titles, task_titles = {}, {}
+    for e in evs:
+        p = e.get("payload") or {}
+        if e.get("event_type") == events.EventType.PROJECT_CREATED.value:
+            project_titles[e.get("project_id")] = p.get("title", "")
+        elif e.get("event_type") == events.EventType.TASK_CREATED.value:
+            task_titles[e.get("task_id")] = p.get("title", "")
+    items = []
+    for a in idx.values():
+        if me not in a["signers"] or a.get("decision") is not None:
+            continue
+        item = _approval_item(a, me)
+        item["project_title"] = project_titles.get(a.get("project_id"), "")
+        item["task_title"] = task_titles.get(a.get("task_id"), "")
+        items.append(item)
+    items.sort(key=lambda x: x.get("requested_ts", 0), reverse=True)
+    return {"approvals": items}
+
+
+@app.post("/approvals/{aid}/signers")
+def set_approval_signers(aid: str, signers: str, rule: str = "all",
+                         auth: dict = Depends(require_auth)):
+    """把既有审批设为会签/调整会签人与规则（L3，未签字前）。"""
+    require_level("approve_action", auth["level"])
+    names = _validate_signers(_parse_signers(signers))
+    rule_n = _normalize_rule(rule)
+    a = _approval_index(log.replay()).get(aid)
+    if a is None:
+        raise HTTPException(404, f"approval {aid} 不存在")
+    _apply_signers(a, names, rule_n, auth)
+    return {"approval_id": aid, "signers": names, "rule": rule_n,
+            "progress": _approval_progress(a)}
+
+
+@app.post("/approvals/{aid}/sign")
+def approval_sign(aid: str, result: str, opinion: str = "",
+                  auth: dict = Depends(require_auth)):
+    """会签人签署：approve / reject。全部按规则同意 → 通过；任一驳回 → 退回。"""
+    if result not in ("approve", "reject"):
+        raise HTTPException(400, "result 只能是 approve 或 reject")
+    opinion = opinion.strip()
+    if result == "reject" and not opinion:
+        raise HTTPException(400, "驳回必须填写意见 opinion")
+    me = auth["user"]
+    evs = log.replay()
+    a = _approval_index(evs).get(aid)
+    if a is None:
+        raise HTTPException(404, f"approval {aid} 不存在")
+    if not a["signers"]:
+        raise HTTPException(400, "该审批未设置会签人，请用 /approvals/{aid}/decision")
+    if me not in a["signers"]:
+        raise HTTPException(403, f"你不是该会签审批的会签人（会签人：{', '.join(a['signers'])}）")
+    prior = next((s for s in a["signatures"] if s.get("signer") == me), None)
+    if prior is not None:
+        if prior.get("result") == result and (prior.get("opinion") or "") == opinion:
+            # 幂等重试：终态后重签同一结果仍返回 200，status 反映当前实际状态
+            decided = a.get("decision")
+            return {"approval_id": aid, "result": result,
+                    "status": (decided["payload"].get("result")
+                               if decided is not None else "pending"),
+                    "idempotent": True, "progress": _approval_progress(a)}
+        raise HTTPException(400, f"你已签署为 {prior.get('result')}，不能改签")
+    if a.get("decision") is not None:
+        raise HTTPException(400, f"该审批已结束（{a['decision']['payload'].get('result')}）")
+    log.append(events.new_event(
+        events.EventType.APPROVAL_SIGNED, f"user:{me}",
+        {"approval_id": aid, "signer": me, "result": result, "opinion": opinion},
+        project_id=a.get("project_id"), task_id=a.get("task_id"),
+        user_id=auth.get("user_id"),
+        idempotency_key=f"approval:sign:{aid}:{me}"))
+    a["signatures"].append({"signer": me, "result": result, "opinion": opinion,
+                            "user_id": auth.get("user_id")})
+    final = _evaluate_countersign(a)
+    if final:
+        _finalize_countersign(a, final)
+    return {"approval_id": aid, "result": result,
+            "status": final or "pending", "progress": _approval_progress(a)}
+
+
 @app.post("/tasks/{tid}/deliverables")
 def submit_deliverable(tid: str, file_ref: str,
                        summary: str = "", verdict: str = "done",
@@ -1501,27 +1812,47 @@ def _apply_review_outcome(tid: str, pid: str | None, verdict: ReviewVerdict,
 
 
 @app.post("/tasks/{tid}/approvals")
-def request_approval(tid: str, scope: str = "flow_change", auth: dict = Depends(require_auth)):
-    """创建审批请求（绑定任务，需 L3）。"""
+def request_approval(tid: str, scope: str = "flow_change",
+                     signers: str = "", rule: str = "all",
+                     auth: dict = Depends(require_auth)):
+    """创建审批请求（绑定任务，需 L3）。
+
+    可选 signers=张三,李四 发起会签；rule=all（默认，全部同意）/ any（任一同意）。
+    不带 signers 时保持原单人审批语义（兼容既有流程）。
+    """
     require_level("approve_action", auth["level"])
     _require_task_access(tid, auth)
     pid = _task_project_id(tid)
     if pid is None:
         raise HTTPException(404, "task not found")
+    names = _parse_signers(signers)
+    rule_n = _normalize_rule(rule)
+    if names:
+        _validate_signers(names)
     # 幂等：同任务+scope 已有审批请求 → 返回同 approval_id（重试不新建）
     existing = next((e for e in log.replay(task_id=tid)
                      if e["event_type"] == events.EventType.APPROVAL_REQUESTED.value
                      and e["payload"].get("scope") == scope), None)
     if existing:
-        return {"approval_id": existing["payload"]["approval_id"], "task_id": tid}
+        aid = existing["payload"]["approval_id"]
+        if names:
+            a = _approval_index(log.replay(task_id=tid)).get(aid)
+            if a is not None:
+                _apply_signers(a, names, rule_n, auth)
+        _advance_to_pending_approval(tid, pid)
+        return {"approval_id": aid, "task_id": tid,
+                "signers": names, "rule": rule_n}
     aid = str(uuid.uuid4())
+    payload = {"approval_id": aid, "scope": scope, "initiator": auth["user"]}
+    if names:
+        payload.update({"signers": names, "rule": rule_n})
     log.append(events.new_event(
-        events.EventType.APPROVAL_REQUESTED, "system",
-        {"approval_id": aid, "scope": scope},
+        events.EventType.APPROVAL_REQUESTED, "system", payload,
         project_id=pid, task_id=tid, idempotency_key=f"approval:req:{tid}:{scope}"))
     # 审批门通用化：请求审批时，任务 IN_REVIEW → PENDING_APPROVAL（状态机：待复核→待批准）
     _advance_to_pending_approval(tid, pid)
-    return {"approval_id": aid, "task_id": tid}
+    return {"approval_id": aid, "task_id": tid,
+            "signers": names, "rule": rule_n}
 
 
 def _advance_to_pending_approval(tid: str, pid: str | None):
@@ -1585,6 +1916,12 @@ def approval_decision(aid: str, result: str, auth: dict = Depends(require_auth))
                 and e["payload"].get("approval_id") == aid), None)
     if req is None:
         raise HTTPException(404, f"approval {aid} 不存在")   # 拒绝任意 ID
+    # 会签审批只能由会签人逐人签署（禁止 L3 一步代签，保证签名真实）
+    a = _approval_index(evs).get(aid)
+    if a is not None and a.get("signers"):
+        raise HTTPException(
+            400, f"该审批已设置会签人（{', '.join(a['signers'])}），"
+                 f"请由会签人调用 POST /approvals/{aid}/sign 签署")
     # 审批终态：已决策再决 → 同 result 幂等 200，不同 result 冲突 400（幂等重试）
     for e in evs:
         if e["event_type"] == events.EventType.APPROVAL_DECIDED.value                 and e["payload"].get("approval_id") == aid:

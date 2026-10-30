@@ -87,6 +87,19 @@ class UserStore:
             return self._get_user_db(user_id=user_id)
         return self._get_user_json(user_id=user_id)
 
+    def list_users(self) -> list[dict]:
+        """用户名单（会签人选人用）：只返回 id/username/level，不含密码哈希。"""
+        if self._engine is not None:
+            with self._engine.connect() as conn:
+                rows = conn.execute(text(
+                    "SELECT id, username, level FROM users ORDER BY username")
+                ).mappings().all()
+            return [{"id": str(r["id"]), "username": r["username"],
+                     "level": int(r["level"])} for r in rows]
+        return [{"id": u.get("id"), "username": u.get("username"),
+                 "level": int(u.get("level") or 1)}
+                for u in self._load_users_json().values()]
+
     # ---------- token ----------
     def issue_token(self, user_id: str) -> str:
         token = secrets.token_urlsafe(32)

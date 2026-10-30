@@ -4,7 +4,8 @@ import './App.css'
 const EVENT_LABEL = {
   'project.created': '创建项目', 'task.created': '创建任务', 'task.state_changed': '状态流转',
   'deliverable.submitted': '提交产出', 'review.requested': '请求复核', 'review.decided': '复核结论',
-  'approval.requested': '请求审批', 'approval.decided': '审批决策', 'agent.assigned': '指派 Agent',
+  'approval.requested': '请求审批', 'approval.signers_set': '设置会签人',
+  'approval.signed': '会签签署', 'approval.decided': '审批决策', 'agent.assigned': '指派 Agent',
   'task.stalled': '悬空告警', 'agent.execution_failed': '执行失败',
   'agent.transferred': '转移任务', 'agent.registered': '注册 Agent', 'goal.parsed': '解析需求',
   'message.aggregated': '收到消息', 'feedback.submitted': '收到反馈', 'project.paused': '项目暂停',
@@ -18,7 +19,12 @@ function evSummary(e) {
     'deliverable.submitted': p.file_ref ? `产出：${p.file_ref}` : '',
     'agent.assigned': p.agent ? `给 ${p.agent}` : '',
     'goal.parsed': p.summary ? `已拆出 ${(p.tasks || []).length} 个任务` : '',
-    'approval.decided': p.result === 'approve' ? '已批准' : '已拒绝',
+    'approval.requested': p.signers?.length ? `会签 ${p.signers.length} 人：${p.signers.join('、')}` : '',
+    'approval.signers_set': p.signers?.length ? `会签人：${p.signers.join('、')}` : '',
+    'approval.signed': p.signer ? `${p.signer} ${p.result === 'approve' ? '同意' : '驳回'}${p.opinion ? `：${p.opinion}` : ''}` : '',
+    'approval.decided': p.result === 'approve'
+      ? (p.countersign ? '会签通过' : '已批准')
+      : (p.countersign ? '会签驳回' : '已拒绝'),
     'review.decided': p.verdict ? `结论：${p.verdict}` : '',
   }
   return map[e.event_type] || ''
@@ -84,6 +90,36 @@ const LEGAL = {
 const NUMERIC_WORDS = ['计算', '统计', '权重', '比率', '胜率', '均值', '检验', '概率', '金额', '算', '汇总', '指标']
 function isNumericTask(title = '') {
   return NUMERIC_WORDS.some((w) => title.includes(w))
+}
+
+// 会签审批视图：把 approval.* 事件折叠成 {approval_id, signers, rule, signatures, decision}
+function buildApprovalViews(events = []) {
+  const map = {}
+  events.forEach((e) => {
+    const p = e.payload || {}
+    const aid = p.approval_id
+    if (!aid) return
+    if (e.event_type === 'approval.requested') {
+      map[aid] = {
+        approval_id: aid, event: e, scope: p.scope || '',
+        signers: p.signers || [], rule: p.rule || 'all',
+        signatures: [], decision: null,
+      }
+    } else if (e.event_type === 'approval.signers_set' && map[aid]) {
+      map[aid].signers = p.signers || []
+      map[aid].rule = p.rule || 'all'
+    } else if (e.event_type === 'approval.signed' && map[aid]) {
+      map[aid].signatures.push(p)
+    } else if (e.event_type === 'approval.decided' && map[aid]) {
+      map[aid].decision = p.result
+    }
+  })
+  return Object.values(map)
+}
+
+function signerState(view, name) {
+  const sig = view.signatures.find((s) => s.signer === name)
+  return sig ? sig.result : null   // 'approve' | 'reject' | null
 }
 const STATUS = {
   todo: { cn: '待办', cls: 'todo' },
@@ -354,6 +390,11 @@ function App() {
   const [materials, setMaterials] = useState([]) // v1.2.1：项目材料库
   const [showBilling, setShowBilling] = useState(false)  // 税务版：开通/授权/收款码
   const [billing, setBilling] = useState(null)
+  const [signables, setSignables] = useState([])   // 会签：轮到我签的审批（跨项目）
+  const [users, setUsers] = useState([])           // 会签人选人名单（L3）
+  const [csFor, setCsFor] = useState(null)         // 正在发起会签的任务 id
+  const [csSigners, setCsSigners] = useState('')
+  const [csRule, setCsRule] = useState('all')
 
   // 会话校验：token 无效/过期 → 清会话回登录页
   useEffect(() => {
@@ -435,6 +476,17 @@ function App() {
     api('/notifications', token).then((d) => setNotifs(d.notifications || [])).catch(() => {})
   }, [authed, token])
 
+  // 会签：轮到我签的审批（跨项目）+ L3 选人名单
+  function refreshSignables() {
+    if (!authed) return
+    api('/approvals/pending', token).then((d) => setSignables(d.approvals || [])).catch(() => {})
+  }
+  useEffect(() => { refreshSignables() }, [authed, token]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!authed || !canL3) return
+    api('/users', token).then((d) => setUsers(d.users || [])).catch(() => {})
+  }, [authed, token, canL3])
+
   const fmtTokens = (n) => n >= 1000000 ? `${(n / 1000000).toFixed(2)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
   const usedTokens = usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : 0
   const limit = usage?.context_limit || 1000000
@@ -507,9 +559,8 @@ function App() {
       .catch((e) => setError(errMsg(e)))
   }
 
-  const approvals = (detail?.audit || []).filter((e) => ['approval.requested', 'approval.decided'].includes(e.event_type))
-  const decidedAids = new Set(approvals.filter((e) => e.event_type === 'approval.decided').map((e) => e.payload?.approval_id))
-  const pendingApprovals = approvals.filter((e) => e.event_type === 'approval.requested' && !decidedAids.has(e.payload?.approval_id))
+  const approvalViews = buildApprovalViews(detail?.audit || [])
+  const pendingApprovals = approvalViews.filter((a) => !a.decision)
   // 待复核（龙虾反馈 2026-09-02：前端需补复核决策入口）：review.requested 且未 review.decided
   const reviewsAll = (detail?.audit || []).filter((e) => ['review.requested', 'review.decided'].includes(e.event_type))
   const decidedRids = new Set(reviewsAll.filter((e) => e.event_type === 'review.decided').map((e) => e.payload?.review_id))
@@ -585,6 +636,54 @@ function App() {
   function decideApproval(aid, result) {
     api(`/approvals/${aid}/decision?result=${result}`, token, { method: 'POST' })
       .then(() => { if (selected) loadDetail(selected); showToast(result === 'approve' ? '✅ 已批准' : '已拒绝') })
+      .catch((e) => setError(errMsg(e)))
+  }
+
+  // 会签：签署 / 发起 / 把既有审批设为会签
+  function signApproval(aid, result) {
+    let opinion = ''
+    if (result === 'reject') {
+      const v = window.prompt('驳回意见（必填）', '')
+      if (v === null) return
+      opinion = v.trim()
+      if (!opinion) { setError('驳回必须填写意见'); return }
+    }
+    const q = new URLSearchParams({ result, ...(opinion ? { opinion } : {}) })
+    api(`/approvals/${aid}/sign?${q}`, token, { method: 'POST' })
+      .then((d) => {
+        refreshSignables()
+        if (selected) loadDetail(selected)
+        showToast(d.status === 'approve' ? '✅ 会签通过'
+          : d.status === 'reject' ? '✕ 会签驳回' : '✅ 已签署，等待其他会签人')
+      })
+      .catch((e) => setError(errMsg(e)))
+  }
+
+  function submitCountersign(tid) {
+    const names = csSigners.trim()
+    if (!names) { setError('请填写会签人用户名'); return }
+    const q = new URLSearchParams({ scope: 'flow_change', signers: names, rule: csRule })
+    api(`/tasks/${tid}/approvals?${q}`, token, { method: 'POST' })
+      .then(() => {
+        setCsFor(null); setCsSigners(''); setCsRule('all')
+        if (selected) loadDetail(selected)
+        refreshSignables()
+        showToast('🤝 已发起会签')
+      })
+      .catch((e) => setError(errMsg(e)))
+  }
+
+  function setApprovalSigners(aid) {
+    const names = window.prompt('会签人用户名（逗号分隔）', '')
+    if (names === null) return
+    if (!names.trim()) { setError('会签人不能为空'); return }
+    const q = new URLSearchParams({ signers: names, rule: 'all' })
+    api(`/approvals/${aid}/signers?${q}`, token, { method: 'POST' })
+      .then(() => {
+        if (selected) loadDetail(selected)
+        refreshSignables()
+        showToast('🤝 已设为会签')
+      })
       .catch((e) => setError(errMsg(e)))
   }
 
@@ -796,6 +895,55 @@ function App() {
             <div className="stat"><div className="stat-num">{fmtTokens(usedTokens)}</div><div className="stat-label">Token 已用</div></div>
           </div>
 
+          <datalist id="ng-users">
+            {users.map((u) => <option key={u.username} value={u.username} />)}
+          </datalist>
+
+          {signables.length > 0 && (
+            <section className="cs-global" data-testid="countersign-center">
+              <h2>✍️ 我的会签 <span className="cnt">{signables.length}</span></h2>
+              {signables.map((a) => {
+                const mine = a.my_signature
+                const canSign = !mine
+                return (
+                  <div className="ap-row" key={a.approval_id}>
+                    <span className="ap-type">会签</span>
+                    <span className="ap-scope">
+                      <b>{a.project_title || '项目'}</b>
+                      {a.task_title ? ` · ${a.task_title}` : ''}
+                      {a.scope ? ` · ${a.scope}` : ''}
+                    </span>
+                    <span className="cs-signers">
+                      {a.signers.map((n) => {
+                        const st = (a.signatures || []).find((s) => s.signer === n)?.result
+                        return (
+                          <span key={n} className={`cs-chip ${st === 'approve' ? 'done' : st === 'reject' ? 'rej' : 'wait'}`}>
+                            {st === 'approve' ? '✅' : st === 'reject' ? '❌' : '⏳'} {n}
+                          </span>
+                        )
+                      })}
+                      <span className="cs-progress">
+                        {a.progress.signed}/{a.progress.total} 已签 · {a.rule === 'any' ? '任一同意即通过' : '全部同意后通过'}
+                      </span>
+                    </span>
+                    <span className="ap-actions">
+                      {canSign ? (
+                        <>
+                          <button className="mini ok" data-testid="sign-approve"
+                                  onClick={() => signApproval(a.approval_id, 'approve')}>✅ 签署同意</button>
+                          <button className="mini danger" data-testid="sign-reject"
+                                  onClick={() => signApproval(a.approval_id, 'reject')}>✕ 驳回</button>
+                        </>
+                      ) : (
+                        <span className="ap-locked">你已{mine === 'approve' ? '同意' : '驳回'}，等待其他会签人</span>
+                      )}
+                    </span>
+                  </div>
+                )
+              })}
+            </section>
+          )}
+
           {!selected ? (
             projects.length === 0 ? (
               <div className="welcome">
@@ -863,11 +1011,29 @@ function App() {
                               {t.status === 'in_progress' && (
                                 <button className="mini" data-testid="submit-deliverable" onClick={() => submitDeliverable(t.task_id)}>提交产出</button>
                               )}
+                              {t.status === 'in_review' && canL3 && (
+                                <button className="mini" data-testid="start-countersign"
+                                        onClick={() => { setCsFor(csFor === t.task_id ? null : t.task_id); setCsSigners(''); setCsRule('all') }}>
+                                  🤝 发起会签
+                                </button>
+                              )}
                               <select className="advance" value=""
                                       onChange={(e) => e.target.value && advanceState(t.task_id, e.target.value)}>
                                 <option value="">推进…</option>
                                 {LEGAL[t.status].map((s) => <option key={s} value={s}>{STATUS[s].cn}</option>)}
                               </select>
+                            </div>
+                          )}
+                          {csFor === t.task_id && (
+                            <div className="cs-form" data-testid="countersign-form">
+                              <input list="ng-users" placeholder="会签人用户名，逗号分隔"
+                                     value={csSigners} onChange={(e) => setCsSigners(e.target.value)} />
+                              <select value={csRule} onChange={(e) => setCsRule(e.target.value)}>
+                                <option value="all">会签（全部同意）</option>
+                                <option value="any">或签（一人同意）</option>
+                              </select>
+                              <button className="mini ok" onClick={() => submitCountersign(t.task_id)}>发起</button>
+                              <button className="mini" onClick={() => setCsFor(null)}>取消</button>
                             </div>
                           )}
                         </div>
@@ -922,18 +1088,54 @@ function App() {
               )}
               {pendingApprovals.length === 0 && pendingReviews.length === 0 ? <p className="muted">暂无待办项</p> : (
                 <div className="approvals">
-                  {pendingApprovals.map((e, i) => (
-                    <div className="ap-row" key={i}>
-                      <span className="ap-type">待审批</span>
-                      <span className="ap-scope">{e.payload?.scope || '流程变更'}</span>
-                      {canL3 ? (
-                        <span className="ap-actions">
-                          <button className="mini ok" data-testid="approve-btn" onClick={() => decideApproval(e.payload.approval_id, 'approve')}>✅ 批准</button>
-                          <button className="mini danger" data-testid="reject-btn" onClick={() => decideApproval(e.payload.approval_id, 'reject')}>✕ 拒绝</button>
-                        </span>
-                      ) : <span className="ap-locked">🔒 需 L3 权限</span>}
-                    </div>
-                  ))}
+                  {pendingApprovals.map((a) => {
+                    const me = session?.username
+                    const mine = a.signers.length ? signerState(a, me) : null
+                    return (
+                      <div className="ap-row" key={a.approval_id}>
+                        <span className="ap-type">{a.signers.length ? '会签' : '待审批'}</span>
+                        <span className="ap-scope">{a.scope || '流程变更'}</span>
+                        {a.signers.length > 0 && (
+                          <span className="cs-signers">
+                            {a.signers.map((n) => {
+                              const st = signerState(a, n)
+                              return (
+                                <span key={n} className={`cs-chip ${st === 'approve' ? 'done' : st === 'reject' ? 'rej' : 'wait'}`}>
+                                  {st === 'approve' ? '✅' : st === 'reject' ? '❌' : '⏳'} {n}
+                                </span>
+                              )
+                            })}
+                            <span className="cs-progress">
+                              {a.signatures.length}/{a.signers.length} 已签 · {a.rule === 'any' ? '任一同意即通过' : '全部同意后通过'}
+                            </span>
+                          </span>
+                        )}
+                        {a.signers.length > 0 ? (
+                          a.signers.includes(me) && !mine ? (
+                            <span className="ap-actions">
+                              <button className="mini ok" data-testid="sign-approve" onClick={() => signApproval(a.approval_id, 'approve')}>✅ 签署同意</button>
+                              <button className="mini danger" data-testid="sign-reject" onClick={() => signApproval(a.approval_id, 'reject')}>✕ 驳回</button>
+                            </span>
+                          ) : (
+                            <span className="ap-actions">
+                              <span className="ap-locked">
+                                {mine ? `你已${mine === 'approve' ? '同意' : '驳回'}，等待其他会签人` : '🔒 仅会签人可签署'}
+                              </span>
+                              {canL3 && !a.signatures.length && (
+                                <button className="mini" onClick={() => setApprovalSigners(a.approval_id)}>调整会签人</button>
+                              )}
+                            </span>
+                          )
+                        ) : canL3 ? (
+                          <span className="ap-actions">
+                            <button className="mini ok" data-testid="approve-btn" onClick={() => decideApproval(a.approval_id, 'approve')}>✅ 批准</button>
+                            <button className="mini danger" data-testid="reject-btn" onClick={() => decideApproval(a.approval_id, 'reject')}>✕ 拒绝</button>
+                            <button className="mini" data-testid="to-countersign" onClick={() => setApprovalSigners(a.approval_id)}>🤝 设为会签</button>
+                          </span>
+                        ) : <span className="ap-locked">🔒 需 L3 权限</span>}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
 

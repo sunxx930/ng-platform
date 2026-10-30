@@ -93,10 +93,26 @@ docker compose up --build        # 自动建库 + 迁移 + API/Worker
 | POST | `/tasks/{id}/deliverables` | 提交产出 | L1 |
 | POST | `/tasks/{id}/heartbeat` | Agent 心跳 | L1 |
 | POST | `/reviews/{id}/decision` | 复核结论 | - |
-| POST | `/approvals/{id}/decision` | 审批 | L3 |
+| POST | `/tasks/{id}/approvals` | 发起审批（可带 `signers=张三,李四&rule=all` 发起会签）| L3 |
+| POST | `/approvals/{id}/sign` | 会签人签署（approve / reject）| 会签人本人 |
+| POST | `/approvals/{id}/signers` | 把既有审批设为会签 / 调整会签人（未签字前）| L3 |
+| GET | `/approvals/pending` | 我的会签（跨项目，等待我签或已签待他人）| 登录 |
+| GET | `/users` | 会签人选人名单（仅用户名/级别）| L3 |
+| POST | `/approvals/{id}/decision` | 单人审批（未设会签人的既有流程）| L3 |
 | GET | `/projects/{id}/audit` | 审计回放 | L0 |
 | POST | `/projects/{id}/pause` | 暂停项目 | L3（需审批）|
 | POST | `/agents/transfer` | 转移任务给 openclaw agent | L2 |
+
+## 审批会签（2026-10-30）
+
+审批可由 **多名会签人共同签署**，适合项目负责人 + 部门负责人 + 合伙人等多人审签场景：
+
+- **规则**：`rule=all`（默认，会签）全部同意才通过、任一驳回即退回；`rule=any`（或签）任一同意即通过、全部驳回才退回。
+- **发起**：`POST /tasks/{tid}/approvals?scope=flow_change&signers=张三,李四&rule=all`（L3）。也可对已创建的普通审批调用 `POST /approvals/{aid}/signers` 补设会签人；一旦有人签署就不能再改名单。
+- **签署**：每位会签人调 `POST /approvals/{aid}/sign?result=approve|reject`，驳回必须带 `opinion`；只能签自己的名字，不能代签，也不能一人改签。
+- **进度与提醒**：`GET /approvals/pending` 返回「我的会签」（跨项目）；前端顶部的「我的会签」面板可逐人签署，项目看板的审批行显示 `2/3 已签` 与会签人状态。会签人不是项目 owner 也能收到相关通知。
+- **审计**：每次签署落 `approval.signed`（含签署人/结果/意见/时间），达到终态时系统补 `approval.decided`（`countersign=true`），之后的任务状态联动（通过→完成，驳回→退回进行中）与单人审批一致。
+- **兼容**：未设置 `signers` 的审批保持原单人审批语义（`/approvals/{id}/decision`）；设置了会签人的审批禁止 L3 一步代签。
 
 ## openclaw 转移
 
