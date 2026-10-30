@@ -92,6 +92,7 @@ def export(src: Path, out: Path) -> int:
     extra_dir = src.parent / "非税法规"
     if extra_dir.is_dir():
         e_files = sorted(extra_dir.glob("*.md"))
+        e_used: set[str] = set()   # _clean_name 截断到 90 字，超长标题可能撞名 → 追加序号
         for f in e_files:
             raw = f.read_text(encoding="utf-8")
             if not raw.strip():
@@ -116,7 +117,13 @@ def export(src: Path, out: Path) -> int:
                   "tax: 非税\n"
                   f"topic: {topic}\n"
                   "---\n\n")
-            (d / f"{_clean_name(topic)}.md").write_text(fm + body + "\n", encoding="utf-8")
+            base = _clean_name(topic)
+            name, k = base, 2
+            while name in e_used:
+                name = f"{base}-{k}"
+                k += 1
+            e_used.add(name)
+            (d / f"{name}.md").write_text(fm + body + "\n", encoding="utf-8")
             n_files += 1
         print(f"  ✓ 非税法规 {len(e_files)} 份")
 
