@@ -97,6 +97,9 @@ def numbers(text: str) -> set[str]:
     for m in re.finditer(r"(?P<org>[一-龥]{2,20}?)\s*(?P<y>\d{4})\s*年第\s*(?P<n>\d+)\s*号令",
                          text):
         out.add(f"{norm_org(m['org'])}|令|{m['n']}")
+    # 裸年号「(2017年第47号)」：括号里没写机关名，只记松键（不伪造空机关严格键）。
+    for m in re.finditer(r"(?P<y>\d{4})\s*年第\s*(?P<n>\d+)\s*号", text):
+        out.add(f"~|年号|{m['y']}|{m['n']}")
     return out
 
 
@@ -155,6 +158,12 @@ def find_repeals(name: str, path: Path) -> list[dict]:
             # 书名号内部（标题本身）不参与「局部废止」判定：标题里常有「条」「项」
             if LOCAL_SCOPE.search(re.sub(r"《[^》]*》", "《》", window)):
                 continue
+            # 「《X》《Y》中…废止」：最后一个标题后面紧跟“中”，是在文件内部废一部分
+            _titles = list(TITLE.finditer(window))
+            if _titles:
+                _tail = window[_titles[-1].end():]
+                if re.match(r"^\s*(?:[（(][^）)]*[)）])?\s*中", _tail):
+                    continue
             # 窗口里的每个《标题》都是被废止对象；文号取紧随其后的括号。
             # 例外：标题后面跟着“公布/施行/发布”的是**发布该文件的令**，不是被废的。
             for tm in TITLE.finditer(window):
@@ -231,6 +240,23 @@ def main() -> int:
                         target, why = same[0], "标题唯一"
                 elif same:
                     why = f"标题同义多份({len(same)})"
+            if not target:                   # ③ 文件名是标题去掉「…关于…的公告」外壳后的同义名
+                head = re.sub(r"^[一-龥、，, ]{0,30}?关于", "", t_norm)
+                if head != t_norm:
+                    core = re.sub(
+                        r"(?:问题|若干问题|有关问题)?的?"
+                        r"(?:公告|通知|规定|办法|决定|意见|批复|令|细则|实施条例|暂行条例)$",
+                        "", head)
+                    if len(core) >= 8:
+                        same = [d for d in docs if d != name and norm_title(d) == core]
+                        if len(same) == 1:
+                            other = dn[same[0]]
+                            if t_nums and other and not (other & t_nums):
+                                why = "标题去壳同名但文号不符"   # 同名不同版本 → 交人工
+                            else:
+                                target, why = same[0], "标题去壳"
+                        elif same:
+                            why = f"标题去壳同义多份({len(same)})"
             row = {"from": name, "to": rep["title"], "nums": rep["nums"],
                    "evidence": rep["evidence"], "why": why}
             (confirmed if target else review).append({**row, "target": target})

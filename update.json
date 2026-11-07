@@ -50,15 +50,15 @@
     "size": 252290101
   },
   "knowledge_regs": {
-    "version": "regs-2026-10-31",
-    "url": "https://github.com/sunxx930/ng-platform/releases/download/v1.3.4/kb-regs-2026-10-31-delta.pack",
-    "sha256": "f70b50f6f2100b7f9ca32c204993a2a7ff6c362a5de7f62f25ad3366c62ac2b5",
-    "size": 75651292,
-    "base": "regs-2026-10-30g",
+    "version": "regs-2026-11-07",
+    "url": "https://github.com/sunxx930/ng-platform/releases/download/v1.3.4/kb-regs-2026-11-07-delta.pack",
+    "sha256": "422d2c943e58551f2ebf23f7b465d22ef88d33d1f7402debde6dd93608ef9af1",
+    "size": 271,
+    "base": "regs-2026-10-31",
     "full": {
-      "url": "https://github.com/sunxx930/ng-platform/releases/download/v1.3.4/kb-regs-2026-10-31.pack",
-      "sha256": "c71405b9b8a8315cb45129840fb4abb26e23c29bee739f6bb9ad8c374f3ab8a1",
-      "size": 159838602
+      "url": "https://github.com/sunxx930/ng-platform/releases/download/v1.3.4/kb-regs-2026-11-07.pack",
+      "sha256": "c2747e181a6a59eda4e42481776009eb7ff7c97d1c8781f795d5e3b79149ffef",
+      "size": 137463440
     }
   },
   "code": {
